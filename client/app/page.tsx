@@ -234,7 +234,7 @@ export default function LandingPage() {
             <div className="w-6 h-6 bg-brand-blue rounded-lg flex items-center justify-center">
               <Video className="w-3 h-3 text-white" />
             </div>
-            <span className="font-semibold text-brand-navy text-sm">RemoteCall</span>
+            <span className="font-semibold text-brand-navy text-sm">AtomSupport</span>
           </div>
           <p className="text-xs text-brand-gray-text">
             © 2026 AtomSupport. Built for AtomQuest Hackathon.

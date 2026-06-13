@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RemoteCall — Support Platform",
+  title: "AtomSupport — Support Platform",
   description: "Real-time remote support with video, chat, and AI assistance",
   icons: {
     icon: "/favicon.ico",
