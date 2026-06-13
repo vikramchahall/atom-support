@@ -15,13 +15,18 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
 
-  async function handleSignup(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSignup() {
+    if (!name.trim() || !email.trim() || !password) {
+      setError("Please fill in all fields.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+
     setLoading(true);
     setError("");
-
-    console.log("Attempting signup with:", email);
-    console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
 
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -35,8 +40,8 @@ export default function SignupPage() {
         },
       });
 
-      console.log("Signup response data:", data);
-      console.log("Signup response error:", error);
+      console.log("Signup data:", data);
+      console.log("Signup error:", error);
 
       if (error) {
         setError(error.message);
@@ -45,10 +50,8 @@ export default function SignupPage() {
       }
 
       if (data?.user) {
-        console.log("User created:", data.user.id);
-        // Check if email confirmation is needed
-        if (data.user.identities && data.user.identities.length === 0) {
-          setError("This email is already registered. Try signing in.");
+        if (data.user.identities?.length === 0) {
+          setError("Email already registered. Please sign in instead.");
           setLoading(false);
           return;
         }
@@ -56,7 +59,7 @@ export default function SignupPage() {
       }
     } catch (err: any) {
       console.error("Signup exception:", err);
-      setError(err.message || "Something went wrong. Check console.");
+      setError(err.message || "Something went wrong.");
       setLoading(false);
     }
   }
@@ -69,11 +72,8 @@ export default function SignupPage() {
             <CheckCircle className="w-8 h-8 text-green-500" />
           </div>
           <h2 className="text-xl font-bold text-brand-navy mb-2">Account created!</h2>
-          <p className="text-sm text-brand-gray-text mb-2">
-            Signed up as <strong>{email}</strong>.
-          </p>
-          <p className="text-xs text-brand-gray-text mb-6">
-            If email confirmation is enabled in Supabase, check your inbox. Otherwise you can sign in now.
+          <p className="text-sm text-brand-gray-text mb-6">
+            Signed up as <strong>{email}</strong>. You can sign in now.
           </p>
           <Link
             href="/login"
@@ -103,7 +103,7 @@ export default function SignupPage() {
         </div>
 
         <div className="card-modal">
-          <form onSubmit={handleSignup} className="space-y-4">
+          <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-brand-navy uppercase tracking-wide mb-2 block">
                 Full name
@@ -114,7 +114,7 @@ export default function SignupPage() {
                 placeholder="Your name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                required
+                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
               />
             </div>
 
@@ -128,7 +128,7 @@ export default function SignupPage() {
                 placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
+                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
               />
             </div>
 
@@ -142,8 +142,7 @@ export default function SignupPage() {
                 placeholder="Min. 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                minLength={8}
-                required
+                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
               />
             </div>
 
@@ -155,7 +154,7 @@ export default function SignupPage() {
             )}
 
             <button
-              type="submit"
+              onClick={handleSignup}
               disabled={loading}
               className="btn-primary w-full flex items-center justify-center gap-2 py-4 text-base"
             >
@@ -165,16 +164,6 @@ export default function SignupPage() {
                 <>Create account <ArrowRight className="w-4 h-4" /></>
               )}
             </button>
-          </form>
-
-          {/* Debug panel — remove before production */}
-          <div className="mt-4 p-3 bg-brand-gray rounded-2xl">
-            <p className="text-xs text-brand-gray-text font-mono">
-              URL set: {process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅" : "❌ MISSING"}
-            </p>
-            <p className="text-xs text-brand-gray-text font-mono">
-              KEY set: {process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅" : "❌ MISSING"}
-            </p>
           </div>
 
           <div className="mt-6 pt-6 border-t border-brand-gray-mid text-center">
