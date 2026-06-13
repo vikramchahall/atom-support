@@ -31,10 +31,11 @@ export default function SignupPage() {
       });
 
       if (error) {
-        setLoading(false);
-        setError(error.message);
-        return;
-      }
+  console.error("SUPABASE SIGNUP ERROR:", error);
+  setLoading(false);
+  setError(JSON.stringify(error));
+  return;
+}
 
       if (data?.user?.identities?.length === 0) {
         setLoading(false);

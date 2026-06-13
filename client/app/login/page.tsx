@@ -40,8 +40,10 @@ export default function LoginPage() {
         return;
       }
 
-      if (data?.session) {
-        router.replace("/dashboard");
+if (data?.session) {
+  
+  await new Promise(r => setTimeout(r, 100));
+  router.replace("/dashboard");
       } else {
         setLoading(false);
         setError("Login failed. Please try again.");

@@ -26,19 +26,19 @@ export default function DashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.replace("/login");
-      return;
+useEffect(() => {
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    async (event, session) => {
+      if (!session) {
+        router.replace("/login");
+        return;
+      }
+      setUser(session.user);
+      fetchSessions(session.user.id);
     }
-    setUser(user);
-    fetchSessions(user.id);
-  }
+  );
+  return () => subscription.unsubscribe();
+}, []);
 
   async function fetchSessions(agentId: string) {
     const { data, error } = await supabase
