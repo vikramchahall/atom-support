@@ -371,9 +371,7 @@ async function initMedia(deviceId?: string, facing?: "user" | "environment") {
     setSending(true);
     const msg = chatInput.trim();
     setChatInput("");
-    await supabase.from("messages").insert({ session_id: sessionId, sender: name, message: msg });
-    setSending(false);
-  }
+setSending(false);  }
 
   // ── Controls ───────────────────────────────────────────────────────────────
 
@@ -616,12 +614,21 @@ async function initMedia(deviceId?: string, facing?: "user" | "environment") {
                 {messages.map((m) => (
                   <div key={m.id} className={`flex flex-col gap-0.5 ${m.sender === name ? "items-end" : "items-start"}`}>
                     <span className="text-white/40 text-[10px] px-1">{m.sender}</span>
-                    <div className={`max-w-[85%] px-3 py-1.5 rounded-2xl text-sm break-words
-                      ${m.sender === name
-                        ? "bg-brand-blue text-white rounded-br-sm"
-                        : "bg-white/15 text-white rounded-bl-sm"}`}>
-                      {m.message}
-                    </div>
+<div className={`max-w-[85%] px-3 py-1.5 rounded-2xl text-sm break-words
+  ${m.sender === name
+    ? "bg-brand-blue text-white rounded-br-sm"
+    : "bg-white/15 text-white rounded-bl-sm"}`}>
+  {m.message.includes("📎 ") && m.message.includes("||") ? (() => {
+    const [label, fileUrl] = m.message.split("||");
+    return (
+      <a href={fileUrl} target="_blank" rel="noopener noreferrer" download
+        className="flex items-center gap-1.5 underline underline-offset-2 break-all">
+        <Paperclip className="w-3 h-3 flex-shrink-0" />
+        {label.replace("📎 ", "")}
+      </a>
+    );
+  })() : m.message}
+</div>
                   </div>
                 ))}
                 <div ref={chatEndRef} />
@@ -871,12 +878,21 @@ async function initMedia(deviceId?: string, facing?: "user" | "environment") {
                   {messages.map((m) => (
                     <div key={m.id} className={`flex flex-col gap-1 ${m.sender === name ? "items-end" : "items-start"}`}>
                       <span className="text-white/40 text-xs px-1">{m.sender}</span>
-                      <div className={`max-w-[88%] px-3 py-2 rounded-2xl text-sm leading-relaxed break-words
-                        ${m.sender === name
-                          ? "bg-brand-blue text-brand-navy font-medium rounded-br-sm"
-                          : "bg-white/10 text-white rounded-bl-sm"}`}>
-                        {m.message}
-                      </div>
+   <div className={`max-w-[88%] px-3 py-2 rounded-2xl text-sm leading-relaxed break-words
+  ${m.sender === name
+    ? "bg-brand-blue text-brand-navy font-medium rounded-br-sm"
+    : "bg-white/10 text-white rounded-bl-sm"}`}>
+  {m.message.includes("📎 ") && m.message.includes("||") ? (() => {
+    const [label, fileUrl] = m.message.split("||");
+    return (
+      <a href={fileUrl} target="_blank" rel="noopener noreferrer" download
+        className="flex items-center gap-1.5 underline underline-offset-2 break-all">
+        <Paperclip className="w-3 h-3 flex-shrink-0" />
+        {label.replace("📎 ", "")}
+      </a>
+    );
+  })() : m.message}
+</div>
                       <span className="text-white/20 text-xs px-1">
                         {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
@@ -980,17 +996,17 @@ async function initMedia(deviceId?: string, facing?: "user" | "environment") {
 
         <label className="w-12 h-12 bg-white/10 text-white rounded-2xl flex items-center justify-center cursor-pointer hover:bg-white/20 transition-all">
           <Paperclip className="w-5 h-5" />
-          <input type="file" className="hidden" onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file || !sessionId) return;
-            const path = `${sessionId}/${Date.now()}-${file.name}`;
-            const { error } = await supabase.storage.from("support-files").upload(path, file);
-            if (!error) {
-              const { data: url } = supabase.storage.from("support-files").getPublicUrl(path);
-              await supabase.from("files").insert({ session_id: sessionId, file_url: url.publicUrl, file_name: file.name, file_size: file.size, uploaded_by: name });
-              await supabase.from("messages").insert({ session_id: sessionId, sender: name, message: `📎 Shared file: ${file.name}` });
-            }
-          }} />
+  <input type="file" className="hidden" onChange={async (e) => {
+  const uploadedFile = e.target.files?.[0];
+  if (!uploadedFile || !sessionId) return;
+  const path = `${sessionId}/${Date.now()}-${uploadedFile.name}`;
+  const { error } = await supabase.storage.from("support-files").upload(path, uploadedFile);
+  if (!error) {
+    const { data: urlData } = supabase.storage.from("support-files").getPublicUrl(path);
+    await supabase.from("files").insert({ session_id: sessionId, file_url: urlData.publicUrl, file_name: uploadedFile.name, file_size: uploadedFile.size, uploaded_by: name });
+    await supabase.from("messages").insert({ session_id: sessionId, sender: name, message: `📎 ${uploadedFile.name}||${urlData.publicUrl}` });
+  }
+}} />
         </label>
 
         <button onClick={() => { setTab("ai"); generateAISummary(); }}
