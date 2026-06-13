@@ -591,12 +591,12 @@ function stampNumber(n: number) {
 }
   // ── AI ─────────────────────────────────────────────────────────────────────
 
-  async function generateAISummary() {
+async function generateAISummary() {
     if (!messages.length) { setAiSummary("No messages yet."); return; }
     setAiLoading(true); setTab("ai");
     const chatHistory = messages.map(m => `${m.sender}: ${m.message}`).join("\n");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
