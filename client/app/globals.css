@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base { 
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #F8FAFC;
+    color: #0F172A;
+  }
+}
+
+@layer components {
+  /* Pill Buttons */
+  .btn-primary {
+    @apply bg-brand-blue hover:bg-brand-blue-light text-white font-semibold
+           px-6 py-3 rounded-full transition-all duration-200
+           shadow-soft hover:shadow-md active:scale-95 text-sm tracking-tight;
+  }
+
+  .btn-secondary {
+    @apply bg-white hover:bg-brand-blue-pale text-brand-blue font-semibold
+           px-6 py-3 rounded-full border border-brand-gray-mid
+           transition-all duration-200 text-sm tracking-tight;
+  }
+
+  .btn-ghost {
+    @apply text-brand-gray-text hover:text-brand-navy
+           px-4 py-2 rounded-full hover:bg-brand-gray
+           transition-all duration-200 text-sm font-medium;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-white rounded-3xl shadow-card border border-brand-gray-mid/50 p-6;
+  }
+
+  .card-modal {
+    @apply bg-white rounded-4xl shadow-modal border border-brand-gray-mid/30 p-8;
+  }
+
+  /* Inputs */
+  .input-field {
+    @apply w-full bg-brand-blue-pale border border-brand-gray-mid rounded-2xl
+           px-4 py-3 text-sm text-brand-navy placeholder:text-brand-gray-text
+           focus:outline-none focus:ring-2 focus:ring-brand-blue/30
+           focus:border-brand-blue transition-all duration-200;
+  }
+
+  /* Glassmorphism */
+  .glass {
+    @apply bg-white/20 backdrop-blur-xl border border-white/30;
+  }
+
+  .glass-dark {
+    @apply bg-brand-navy/60 backdrop-blur-xl border border-white/10;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center justify-center w-6 h-6 rounded-full
+           bg-brand-blue text-white text-xs font-bold;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #F8FAFC; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Animations */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-fade-in-up { animation: fadeInUp 0.4s ease both; }
+.animate-fade-in    { animation: fadeIn 0.3s ease both; }
