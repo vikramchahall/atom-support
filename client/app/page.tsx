@@ -21,7 +21,7 @@ export default function LandingPage() {
               <Video className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-brand-navy text-lg tracking-tight">
-              RemoteCall
+              AtomSupport
             </span>
           </div>
           <div className="hidden md:flex items-center gap-1">
@@ -237,7 +237,7 @@ export default function LandingPage() {
             <span className="font-semibold text-brand-navy text-sm">RemoteCall</span>
           </div>
           <p className="text-xs text-brand-gray-text">
-            © 2025 RemoteCall. Built for AtomQuest Hackathon.
+            © 2026 AtomSupport. Built for AtomQuest Hackathon.
           </p>
         </div>
       </footer>
