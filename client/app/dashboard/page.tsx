@@ -111,7 +111,7 @@ useEffect(() => {
             <div className="w-8 h-8 bg-brand-blue rounded-xl flex items-center justify-center">
               <Video className="w-4 h-4 text-brand-navy" />
             </div>
-            <span className="font-bold text-white text-lg tracking-tight">RemoteCall</span>
+            <span className="font-bold text-white text-lg tracking-tight">AtomSupport</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-white/50 text-sm hidden md:block">{user?.email}</span>

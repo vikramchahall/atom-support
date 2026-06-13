@@ -143,7 +143,7 @@ function JoinPageInner() {
               <p>By joining this remote support session, you agree to allow the support agent to view your device camera and provide assistance.</p>
               <p>This session may be recorded for quality assurance purposes. You will be notified if recording begins.</p>
               <p>Do not share sensitive personal information such as passwords or financial details during this session.</p>
-              <p>RemoteCall connects customers with authorized support agents only. If you have concerns, end the session immediately.</p>
+              <p>AtomSupport connects customers with authorized support agents only. If you have concerns, end the session immediately.</p>
               <p>Your session data is encrypted in transit and stored securely per our Privacy Policy.</p>
             </div>
             <button
