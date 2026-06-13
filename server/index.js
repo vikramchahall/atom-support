@@ -6,12 +6,18 @@ const cors = require("cors");
 const mediasoup = require("mediasoup");
 
 const app = express();
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(cors({
+  origin: process.env.CLIENT_URL || "*",
+  methods: ["GET", "POST"],
+}));
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "http://localhost:3000", methods: ["GET", "POST"] },
+  cors: {
+    origin: process.env.CLIENT_URL || "*",
+    methods: ["GET", "POST"],
+  },
 });
 
 // --- Mediasoup setup ---
