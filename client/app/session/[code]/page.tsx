@@ -244,7 +244,9 @@ function SessionPageInner() {
       }).subscribe();
 
     // Socket signaling
-    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL!, { transports: ["websocket"] });
+  const socket = io(process.env.NEXT_PUBLIC_SERVER_URL!, {
+  transports: ["polling", "websocket"], // polling first, then upgrade
+});
     socketRef.current = socket;
 
     socket.on("connect", () => {
