@@ -1,181 +1,701 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Video, ArrowRight, CheckCircle, AlertCircle } from "lucide-react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import {
+  Mic, MicOff, Video, VideoOff, Phone, Send,
+  Paperclip, Pencil, Square, Circle, Type,
+  Minus, RotateCcw, Zap, Users, ChevronRight,
+  Bot, Copy, CheckCircle, X
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-export default function SignupPage() {
+type Message = { id: string; sender: string; message: string; created_at: string };
+type Tool = "pen" | "arrow" | "rectangle" | "circle" | "text" | "laser" | null;
+
+function SessionPageInner() {
+  const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
+  const code = params.code as string;
+  const role = searchParams.get("role") || "customer";
+  const name = searchParams.get("name") || (role === "agent" ? "Agent" : "Customer");
 
-  async function handleSignup() {
-    if (!name.trim() || !email.trim() || !password) {
-      setError("Please fill in all fields.");
-      return;
-    }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const [micOn, setMicOn] = useState(true);
+  const [camOn, setCamOn] = useState(true);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [mediaError, setMediaError] = useState("");
 
-    setLoading(true);
-    setError("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [sending, setSending] = useState(false);
 
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [activeTool, setActiveTool] = useState<Tool>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawStart, setDrawStart] = useState({ x: 0, y: 0 });
+  const [toolColor, setToolColor] = useState("#FFB200");
+
+  const [tab, setTab] = useState<"chat" | "ai">("chat");
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [aiSummary, setAiSummary] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [participantCount, setParticipantCount] = useState(1);
+  const [sessionReady, setSessionReady] = useState(false);
+
+  useEffect(() => {
+    initMedia();
+    initSession();
+  }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      stream?.getTracks().forEach(t => t.stop());
+    };
+  }, [stream]);
+
+  async function initMedia() {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: {
-            name: name.trim(),
-            role: "agent",
-          },
-        },
-      });
-
-      console.log("Signup data:", data);
-      console.log("Signup error:", error);
-
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-        return;
-      }
-
-      if (data?.user) {
-        if (data.user.identities?.length === 0) {
-          setError("Email already registered. Please sign in instead.");
-          setLoading(false);
-          return;
-        }
-        setDone(true);
-      }
+      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setStream(s);
+      if (localVideoRef.current) localVideoRef.current.srcObject = s;
     } catch (err: any) {
-      console.error("Signup exception:", err);
-      setError(err.message || "Something went wrong.");
-      setLoading(false);
+      console.warn("Media error:", err.message);
+      setMediaError("Camera/mic not available. Chat still works.");
     }
   }
 
-  if (done) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-gradient-to-br from-amber-50 to-white">
-        <div className="card-modal max-w-sm w-full text-center animate-fade-in-up">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-8 h-8 text-green-500" />
-          </div>
-          <h2 className="text-xl font-bold text-brand-navy mb-2">Account created!</h2>
-          <p className="text-sm text-brand-gray-text mb-6">
-            Signed up as <strong>{email}</strong>. You can sign in now.
-          </p>
-          <Link
-            href="/login"
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
-            Go to sign in <ArrowRight className="w-4 h-4" />
-          </Link>
-        </div>
-      </div>
-    );
+  async function initSession() {
+    const { data: sess, error: sessError } = await supabase
+      .from("sessions")
+      .select("id, status")
+      .eq("session_code", code)
+      .single();
+
+    console.log("Session lookup:", sess, sessError);
+
+    if (!sess) {
+      alert(`Session ${code} not found. Please check the code.`);
+      router.push(role === "agent" ? "/dashboard" : "/join");
+      return;
+    }
+
+    setSessionId(sess.id);
+    setSessionReady(true);
+
+    await supabase.from("participants").insert({
+      session_id: sess.id,
+      role,
+      name,
+      joined_at: new Date().toISOString(),
+    });
+
+    const { data: msgs } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("session_id", sess.id)
+      .order("created_at", { ascending: true });
+
+    setMessages(msgs || []);
+
+    const { data: parts } = await supabase
+      .from("participants")
+      .select("id")
+      .eq("session_id", sess.id)
+      .is("left_at", null);
+
+    setParticipantCount(parts?.length || 1);
+
+    const msgChannel = supabase
+      .channel(`messages-${sess.id}`)
+      .on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "messages",
+        filter: `session_id=eq.${sess.id}`,
+      }, (payload) => {
+        setMessages((prev) => {
+          if (prev.find(m => m.id === payload.new.id)) return prev;
+          return [...prev, payload.new as Message];
+        });
+      })
+      .subscribe();
+
+    const partChannel = supabase
+      .channel(`participants-${sess.id}`)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "participants",
+        filter: `session_id=eq.${sess.id}`,
+      }, async () => {
+        const { data } = await supabase
+          .from("participants")
+          .select("id")
+          .eq("session_id", sess.id)
+          .is("left_at", null);
+        setParticipantCount(data?.length || 1);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(msgChannel);
+      supabase.removeChannel(partChannel);
+    };
   }
+
+  async function sendMessage() {
+    if (!chatInput.trim() || !sessionId || sending) return;
+    setSending(true);
+    const msg = chatInput.trim();
+    setChatInput("");
+    const { error } = await supabase.from("messages").insert({
+      session_id: sessionId,
+      sender: name,
+      message: msg,
+    });
+    if (error) console.error("Send message error:", error);
+    setSending(false);
+  }
+
+  function toggleMic() {
+    stream?.getAudioTracks().forEach(t => { t.enabled = !micOn; });
+    setMicOn(!micOn);
+  }
+
+  function toggleCam() {
+    stream?.getVideoTracks().forEach(t => { t.enabled = !camOn; });
+    setCamOn(!camOn);
+  }
+
+  async function endSession() {
+    if (sessionId) {
+      if (role === "agent") {
+        await supabase.from("sessions").update({
+          status: "ended",
+          ended_at: new Date().toISOString(),
+        }).eq("id", sessionId);
+      }
+      await supabase.from("participants").update({
+        left_at: new Date().toISOString(),
+      }).eq("session_id", sessionId).eq("name", name);
+    }
+    stream?.getTracks().forEach(t => t.stop());
+    router.push(role === "agent" ? "/dashboard" : "/");
+  }
+
+  function copySessionLink() {
+    const url = `${window.location.origin}/join?prefill=${code}`;
+    navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  }
+
+  function getCanvasPos(e: React.MouseEvent<HTMLCanvasElement>) {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const scaleX = canvasRef.current!.width / rect.width;
+    const scaleY = canvasRef.current!.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  }
+
+  function canvasMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!activeTool) return;
+    setIsDrawing(true);
+    setDrawStart(getCanvasPos(e));
+  }
+
+  function canvasMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!isDrawing || !activeTool || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d")!;
+    const pos = getCanvasPos(e);
+    if (activeTool === "pen" || activeTool === "laser") {
+      ctx.strokeStyle = activeTool === "laser" ? "rgba(255,50,50,0.8)" : toolColor;
+      ctx.lineWidth = activeTool === "laser" ? 4 : 2.5;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(drawStart.x, drawStart.y);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      setDrawStart(pos);
+    }
+  }
+
+  function canvasMouseUp(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!isDrawing || !activeTool || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d")!;
+    const pos = getCanvasPos(e);
+    ctx.strokeStyle = toolColor;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    if (activeTool === "rectangle") {
+      ctx.strokeRect(drawStart.x, drawStart.y, pos.x - drawStart.x, pos.y - drawStart.y);
+    } else if (activeTool === "circle") {
+      const r = Math.sqrt((pos.x - drawStart.x) ** 2 + (pos.y - drawStart.y) ** 2);
+      ctx.beginPath();
+      ctx.arc(drawStart.x, drawStart.y, r, 0, 2 * Math.PI);
+      ctx.stroke();
+    } else if (activeTool === "arrow") {
+      ctx.beginPath();
+      ctx.moveTo(drawStart.x, drawStart.y);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      const angle = Math.atan2(pos.y - drawStart.y, pos.x - drawStart.x);
+      ctx.beginPath();
+      ctx.moveTo(pos.x, pos.y);
+      ctx.lineTo(pos.x - 16 * Math.cos(angle - 0.4), pos.y - 16 * Math.sin(angle - 0.4));
+      ctx.lineTo(pos.x - 16 * Math.cos(angle + 0.4), pos.y - 16 * Math.sin(angle + 0.4));
+      ctx.closePath();
+      ctx.fillStyle = toolColor;
+      ctx.fill();
+    }
+    setIsDrawing(false);
+  }
+
+  function clearCanvas() {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (ctx && canvasRef.current) {
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+  }
+
+  async function generateAISummary() {
+    if (!messages.length) {
+      setAiSummary("No chat messages yet to summarize.");
+      return;
+    }
+    setAiLoading(true);
+    setTab("ai");
+    const chatHistory = messages.map(m => `${m.sender}: ${m.message}`).join("\n");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: `You are a support session summarizer. Given this chat history from a remote support session, generate a concise structured summary.\n\nChat:\n${chatHistory}\n\nRespond in this exact format:\n**Issue:** [one line description]\n**Steps Taken:** [bullet points of what was tried]\n**Resolution:** [outcome]\n**Follow-up:** [any next steps or none]`,
+          }],
+        }),
+      });
+      const data = await res.json();
+      const summary = data.content?.[0]?.text || "Could not generate summary.";
+      setAiSummary(summary);
+      if (sessionId) {
+        await supabase.from("ai_summaries").insert({
+          session_id: sessionId,
+          raw_summary: summary,
+        });
+      }
+    } catch (err) {
+      setAiSummary("Error generating summary. Check console.");
+      console.error(err);
+    }
+    setAiLoading(false);
+  }
+
+  const drawingTools = [
+    { id: "pen", icon: <Pencil className="w-4 h-4" />, label: "Pen" },
+    { id: "arrow", icon: <ChevronRight className="w-4 h-4" />, label: "Arrow" },
+    { id: "rectangle", icon: <Square className="w-4 h-4" />, label: "Rect" },
+    { id: "circle", icon: <Circle className="w-4 h-4" />, label: "Circle" },
+    { id: "text", icon: <Type className="w-4 h-4" />, label: "Text" },
+    { id: "laser", icon: <Minus className="w-4 h-4" />, label: "Laser" },
+  ];
+
+  const colors = ["#FFB200", "#EF4444", "#22C55E", "#3B82F6", "#A855F7", "#FFFFFF"];
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-gradient-to-br from-amber-50 via-white to-yellow-50" />
-      <div className="absolute top-1/3 right-1/4 w-72 h-72 bg-brand-blue/10 rounded-full blur-3xl pointer-events-none" />
-
-      <div className="relative w-full max-w-md animate-fade-in-up">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-blue rounded-3xl shadow-soft mb-4">
-            <Video className="w-7 h-7 text-brand-navy" />
-          </div>
-          <h1 className="text-2xl font-bold text-brand-navy">Create your account</h1>
-          <p className="text-sm text-brand-gray-text mt-1">
-            Start supporting customers in minutes
-          </p>
+    <div className="h-screen bg-brand-navy flex flex-col overflow-hidden">
+      {/* TOP BAR */}
+      <div className="h-14 bg-brand-navy-mid border-b border-white/10 flex items-center justify-between px-4 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+          <span className="text-white font-semibold text-sm">Session #{code}</span>
+          <span className="text-white/40 text-xs hidden sm:block">|</span>
+          <span className="text-white/60 text-xs capitalize hidden sm:block">{role} · {name}</span>
         </div>
-
-        <div className="card-modal">
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-semibold text-brand-navy uppercase tracking-wide mb-2 block">
-                Full name
-              </label>
-              <input
-                type="text"
-                className="input-field"
-                placeholder="Your name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-brand-navy uppercase tracking-wide mb-2 block">
-                Work email
-              </label>
-              <input
-                type="email"
-                className="input-field"
-                placeholder="you@company.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-brand-navy uppercase tracking-wide mb-2 block">
-                Password
-              </label>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Min. 8 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
-              />
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-600 text-sm px-4 py-3 rounded-2xl flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
+        <div className="flex items-center gap-3">
+          {mediaError && (
+            <span className="text-amber-400 text-xs hidden md:block">{mediaError}</span>
+          )}
+          <div className="flex items-center gap-1 text-white/50 text-xs">
+            <Users className="w-3 h-3" />
+            {participantCount}
+          </div>
+          {role === "agent" && (
             <button
-              onClick={handleSignup}
-              disabled={loading}
-              className="btn-primary w-full flex items-center justify-center gap-2 py-4 text-base"
+              onClick={copySessionLink}
+              className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition-colors"
             >
-              {loading ? (
-                <div className="w-5 h-5 border-2 border-brand-navy/30 border-t-brand-navy rounded-full animate-spin" />
+              {copiedLink ? (
+                <><CheckCircle className="w-3 h-3 text-green-400" /> Copied</>
               ) : (
-                <>Create account <ArrowRight className="w-4 h-4" /></>
+                <><Copy className="w-3 h-3" /> Copy invite link</>
               )}
             </button>
-          </div>
-
-          <div className="mt-6 pt-6 border-t border-brand-gray-mid text-center">
-            <p className="text-sm text-brand-gray-text">
-              Already have an account?{" "}
-              <Link href="/login" className="text-brand-blue font-semibold hover:underline">
-                Sign in
-              </Link>
-            </p>
-          </div>
+          )}
         </div>
       </div>
+
+      {/* MAIN */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* LEFT TOOLBAR — agent only */}
+        {role === "agent" && (
+          <div className="w-14 bg-brand-navy-mid border-r border-white/10 flex flex-col items-center py-3 gap-1.5 flex-shrink-0">
+            {drawingTools.map((t) => (
+              <button
+                key={t.id}
+                title={t.label}
+                onClick={() => setActiveTool(activeTool === t.id as Tool ? null : t.id as Tool)}
+                className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all
+                  ${activeTool === t.id
+                    ? "bg-brand-blue text-brand-navy font-bold"
+                    : "text-white/50 hover:text-white hover:bg-white/10"
+                  }`}
+              >
+                {t.icon}
+              </button>
+            ))}
+
+            <div className="border-t border-white/10 w-7 my-1" />
+
+            {colors.map((c) => (
+              <button
+                key={c}
+                onClick={() => setToolColor(c)}
+                style={{ background: c }}
+                className={`w-5 h-5 rounded-full transition-all hover:scale-110 flex-shrink-0
+                  ${toolColor === c ? "ring-2 ring-white ring-offset-1 ring-offset-brand-navy-mid scale-110" : ""}`}
+              />
+            ))}
+
+            <div className="border-t border-white/10 w-7 my-1" />
+
+            <button
+              title="Clear annotations"
+              onClick={clearCanvas}
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-white/40 hover:text-red-400 hover:bg-white/10 transition-all"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* CENTER VIDEO */}
+        <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className="w-full h-full object-cover"
+          />
+
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="text-center">
+              <div className="w-20 h-20 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-3">
+                <Users className="w-10 h-10 text-white/20" />
+              </div>
+              <p className="text-white/20 text-sm">
+                {participantCount < 2 ? "Waiting for other participant..." : "Connected"}
+              </p>
+            </div>
+          </div>
+
+          {role === "agent" && (
+            <canvas
+              ref={canvasRef}
+              width={1280}
+              height={720}
+              onMouseDown={canvasMouseDown}
+              onMouseMove={canvasMouseMove}
+              onMouseUp={canvasMouseUp}
+              onMouseLeave={() => setIsDrawing(false)}
+              className="absolute inset-0 w-full h-full"
+              style={{ cursor: activeTool ? "crosshair" : "default" }}
+            />
+          )}
+
+          <div className="absolute bottom-4 right-4 w-28 h-20 rounded-2xl overflow-hidden border-2 border-white/20 shadow-modal bg-brand-navy-mid">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+            />
+            {!camOn && (
+              <div className="absolute inset-0 bg-brand-navy-mid flex items-center justify-center">
+                <VideoOff className="w-5 h-5 text-white/30" />
+              </div>
+            )}
+          </div>
+
+          <div className="absolute top-4 left-4 glass-dark rounded-2xl px-3 py-2">
+            <p className="text-white/40 text-xs">Session</p>
+            <p className="text-white font-mono font-bold text-lg leading-none">{code}</p>
+          </div>
+
+          {activeTool && role === "agent" && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 glass-dark rounded-full px-4 py-2 text-white/80 text-xs capitalize flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full" style={{ background: toolColor }} />
+              {activeTool} tool active
+              <button onClick={() => setActiveTool(null)} className="ml-1 text-white/40 hover:text-white">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT PANEL */}
+        <div className="w-72 bg-brand-navy-mid border-l border-white/10 flex flex-col flex-shrink-0">
+          <div className="flex border-b border-white/10 flex-shrink-0">
+            {[
+              { id: "chat", label: "Chat" },
+              { id: "ai", label: "AI Copilot" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id as "chat" | "ai")}
+                className={`flex-1 py-3 text-xs font-semibold transition-colors
+                  ${tab === t.id
+                    ? "text-brand-blue border-b-2 border-brand-blue"
+                    : "text-white/40 hover:text-white/70"
+                  }`}
+              >
+                {t.label}
+                {t.id === "chat" && messages.length > 0 && (
+                  <span className="ml-1.5 bg-brand-blue text-brand-navy text-xs rounded-full px-1.5 py-0.5">
+                    {messages.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {tab === "chat" && (
+            <>
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {!sessionReady && (
+                  <div className="text-center mt-8">
+                    <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-2" />
+                    <p className="text-white/30 text-xs">Connecting...</p>
+                  </div>
+                )}
+                {sessionReady && messages.length === 0 && (
+                  <p className="text-white/30 text-xs text-center mt-8">
+                    No messages yet. Say hello!
+                  </p>
+                )}
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`flex flex-col gap-1 ${m.sender === name ? "items-end" : "items-start"}`}
+                  >
+                    <span className="text-white/40 text-xs px-1">{m.sender}</span>
+                    <div
+                      className={`max-w-[88%] px-3 py-2 rounded-2xl text-sm leading-relaxed break-words
+                        ${m.sender === name
+                          ? "bg-brand-blue text-brand-navy font-medium rounded-br-sm"
+                          : "bg-white/10 text-white rounded-bl-sm"
+                        }`}
+                    >
+                      {m.message}
+                    </div>
+                    <span className="text-white/20 text-xs px-1">
+                      {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+
+              <div className="p-3 border-t border-white/10 flex-shrink-0">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Type a message..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
+                    }}
+                    disabled={!sessionReady}
+                    className="flex-1 bg-white/10 border border-white/20 rounded-2xl px-3 py-2
+                               text-white text-sm placeholder:text-white/30
+                               focus:outline-none focus:ring-1 focus:ring-brand-blue/60
+                               disabled:opacity-40"
+                  />
+                  <button
+                    onClick={sendMessage}
+                    disabled={!chatInput.trim() || !sessionReady || sending}
+                    className="w-9 h-9 bg-brand-blue rounded-xl flex items-center justify-center
+                               hover:bg-brand-blue-light transition-colors flex-shrink-0
+                               disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Send className="w-4 h-4 text-brand-navy" />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {tab === "ai" && (
+            <div className="flex-1 flex flex-col p-4 gap-3 overflow-y-auto">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-brand-blue/20 rounded-2xl flex items-center justify-center mx-auto mb-2">
+                  <Bot className="w-6 h-6 text-brand-blue" />
+                </div>
+                <p className="text-white/60 text-xs">AI-powered session assistant</p>
+              </div>
+
+              {role === "agent" && (
+                <button
+                  onClick={generateAISummary}
+                  disabled={aiLoading}
+                  className="btn-primary flex items-center justify-center gap-2 text-xs py-3"
+                >
+                  {aiLoading ? (
+                    <div className="w-3 h-3 border-2 border-brand-navy/30 border-t-brand-navy rounded-full animate-spin" />
+                  ) : (
+                    <Zap className="w-3 h-3" />
+                  )}
+                  {aiLoading ? "Generating..." : "Generate AI Summary"}
+                </button>
+              )}
+
+              {aiSummary && (
+                <div className="bg-white/5 rounded-2xl p-4 text-white/80 text-xs leading-relaxed whitespace-pre-wrap border border-white/10">
+                  {aiSummary}
+                </div>
+              )}
+
+              {!aiSummary && !aiLoading && (
+                <div className="space-y-2">
+                  <p className="text-white/40 text-xs font-medium uppercase tracking-wide mb-3">
+                    Quick suggestions
+                  </p>
+                  {[
+                    "Check battery / power connection",
+                    "Try restarting the device",
+                    "Verify network connectivity",
+                    "Update firmware or drivers",
+                    "Check for error codes on screen",
+                    "Take a screenshot of the issue",
+                  ].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => { setChatInput(s); setTab("chat"); }}
+                      className="w-full text-left bg-white/5 hover:bg-white/10 border border-white/10
+                                 rounded-xl px-3 py-2.5 text-white/60 hover:text-white text-xs transition-all"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* BOTTOM CONTROLS */}
+      <div className="h-20 bg-brand-navy-mid border-t border-white/10 flex items-center justify-center gap-3 flex-shrink-0">
+        <button
+          onClick={toggleMic}
+          title={micOn ? "Mute" : "Unmute"}
+          className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all
+            ${micOn ? "bg-white/10 text-white hover:bg-white/20" : "bg-red-500/20 text-red-400 hover:bg-red-500/30"}`}
+        >
+          {micOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+        </button>
+
+        <button
+          onClick={toggleCam}
+          title={camOn ? "Turn off camera" : "Turn on camera"}
+          className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all
+            ${camOn ? "bg-white/10 text-white hover:bg-white/20" : "bg-red-500/20 text-red-400 hover:bg-red-500/30"}`}
+        >
+          {camOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+        </button>
+
+        <button
+          onClick={endSession}
+          title="End session"
+          className="w-14 h-12 bg-red-500 hover:bg-red-600 text-white rounded-2xl flex items-center justify-center transition-all"
+        >
+          <Phone className="w-5 h-5 rotate-[135deg]" />
+        </button>
+
+        {role === "agent" && (
+          <>
+            <label
+              title="Share file"
+              className="w-12 h-12 bg-white/10 text-white rounded-2xl flex items-center justify-center cursor-pointer hover:bg-white/20 transition-all"
+            >
+              <Paperclip className="w-5 h-5" />
+              <input type="file" className="hidden" onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file || !sessionId) return;
+                const path = `${sessionId}/${Date.now()}-${file.name}`;
+                const { error } = await supabase.storage.from("support-files").upload(path, file);
+                if (!error) {
+                  const { data: url } = supabase.storage.from("support-files").getPublicUrl(path);
+                  await supabase.from("files").insert({
+                    session_id: sessionId,
+                    file_url: url.publicUrl,
+                    file_name: file.name,
+                    file_size: file.size,
+                    uploaded_by: name,
+                  });
+                  await supabase.from("messages").insert({
+                    session_id: sessionId,
+                    sender: name,
+                    message: `📎 Shared file: ${file.name}`,
+                  });
+                }
+              }} />
+            </label>
+
+            <button
+              onClick={() => { setTab("ai"); generateAISummary(); }}
+              title="AI Summary"
+              className="w-12 h-12 bg-brand-blue/20 text-brand-blue rounded-2xl flex items-center justify-center hover:bg-brand-blue/30 transition-all"
+            >
+              <Bot className="w-5 h-5" />
+            </button>
+          </>
+        )}
+      </div>
     </div>
+  );
+}
+
+export default function SessionPage() {
+  return (
+    <Suspense fallback={
+      <div className="h-screen bg-brand-navy flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+      </div>
+    }>
+      <SessionPageInner />
+    </Suspense>
   );
 }
