@@ -25,8 +25,11 @@ function SessionPageInner() {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [mediaError, setMediaError] = useState("");
+const [stream, setStream] = useState<MediaStream | null>(null);
+const [mediaError, setMediaError] = useState("");
+
+const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+const [selectedCamera, setSelectedCamera] = useState("");
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -61,17 +64,37 @@ function SessionPageInner() {
       stream?.getTracks().forEach(t => t.stop());
     };
   }, [stream]);
+async function initMedia(deviceId?: string) {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
+      video: deviceId
+        ? { deviceId: { exact: deviceId } }
+        : true,
+      audio: true,
+    });
 
-  async function initMedia() {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setStream(s);
-      if (localVideoRef.current) localVideoRef.current.srcObject = s;
-    } catch (err: any) {
-      console.warn("Media error:", err.message);
-      setMediaError("Camera/mic not available. Chat still works.");
+    setStream(s);
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = s;
     }
+
+    const allDevices = await navigator.mediaDevices.enumerateDevices();
+
+    const cameras = allDevices.filter(
+      (d) => d.kind === "videoinput"
+    );
+
+    setDevices(cameras);
+
+    if (!selectedCamera && cameras.length > 0) {
+      setSelectedCamera(cameras[0].deviceId);
+    }
+  } catch (err: any) {
+    console.warn("Media error:", err.message);
+    setMediaError("Camera/mic not available. Chat still works.");
   }
+}
 
   async function initSession() {
     const { data: sess, error: sessError } = await supabase
@@ -270,6 +293,43 @@ function SessionPageInner() {
     }
   }
 
+  function stampNumber(n: number) {
+  if (!canvasRef.current) return;
+
+  setActiveTool(null);
+
+  const canvas = canvasRef.current;
+
+  function placeStamp(e: MouseEvent) {
+    const ctx = canvas.getContext("2d")!;
+
+    const rect = canvas.getBoundingClientRect();
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    // circle badge
+    ctx.beginPath();
+    ctx.arc(x, y, 18, 0, 2 * Math.PI);
+    ctx.fillStyle = toolColor;
+    ctx.fill();
+
+    // number
+    ctx.fillStyle = "#0A1628";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(n), x, y);
+
+    canvas.removeEventListener("click", placeStamp);
+  }
+
+  canvas.addEventListener("click", placeStamp);
+}
+
   async function generateAISummary() {
     if (!messages.length) {
       setAiSummary("No chat messages yet to summarize.");
@@ -315,6 +375,8 @@ function SessionPageInner() {
     { id: "text", icon: <Type className="w-4 h-4" />, label: "Text" },
     { id: "laser", icon: <Minus className="w-4 h-4" />, label: "Laser" },
   ];
+
+  const stampNumbers = [1, 2, 3, 4, 5, 6];
 
   const colors = ["#FFB200", "#EF4444", "#22C55E", "#3B82F6", "#A855F7", "#FFFFFF"];
 
@@ -383,6 +445,37 @@ function SessionPageInner() {
                   ${toolColor === c ? "ring-2 ring-white ring-offset-1 ring-offset-brand-navy-mid scale-110" : ""}`}
               />
             ))}
+
+            <div className="border-t border-white/10 w-7 my-1" />
+
+<div className="border-t border-white/10 w-7 my-1" />
+
+<p className="text-white/30 text-[9px] text-center mb-1">
+  STAMP
+</p>
+
+<div className="grid grid-cols-3 gap-1 px-1">
+  {stampNumbers.map((n) => (
+    <button
+      key={n}
+      title={`Stamp ${n}`}
+      onClick={() => stampNumber(n)}
+      className="
+        w-8 h-8
+        rounded-md
+        flex items-center justify-center
+        text-[10px] font-bold
+        text-white/70
+        hover:text-white
+        hover:bg-white/10
+        border border-white/10
+        transition-all
+      "
+    >
+      {n}
+    </button>
+  ))}
+</div>
 
             <div className="border-t border-white/10 w-7 my-1" />
 
@@ -627,22 +720,48 @@ function SessionPageInner() {
           {micOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
         </button>
 
-        <button
-          onClick={toggleCam}
-          title={camOn ? "Turn off camera" : "Turn on camera"}
-          className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all
-            ${camOn ? "bg-white/10 text-white hover:bg-white/20" : "bg-red-500/20 text-red-400 hover:bg-red-500/30"}`}
-        >
-          {camOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-        </button>
+<button
+  onClick={toggleCam}
+  title={camOn ? "Turn off camera" : "Turn on camera"}
+  className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all
+    ${camOn ? "bg-white/10 text-white hover:bg-white/20" : "bg-red-500/20 text-red-400 hover:bg-red-500/30"}`}
+>
+  {camOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+</button>
 
-        <button
-          onClick={endSession}
-          title="End session"
-          className="w-14 h-12 bg-red-500 hover:bg-red-600 text-white rounded-2xl flex items-center justify-center transition-all"
-        >
-          <Phone className="w-5 h-5 rotate-[135deg]" />
-        </button>
+{/* CAMERA SELECTOR */}
+{devices.length > 1 && (
+  <select
+    value={selectedCamera}
+    onChange={(e) => {
+      const newCamera = e.target.value;
+      setSelectedCamera(newCamera);
+
+      stream?.getTracks().forEach((t) => t.stop());
+
+      initMedia(newCamera);
+    }}
+    className="bg-white/10 text-white text-xs rounded-xl px-2 py-1 border border-white/20 focus:outline-none"
+  >
+    {devices.map((d, index) => (
+      <option
+        key={d.deviceId}
+        value={d.deviceId}
+        className="bg-brand-navy"
+      >
+        {d.label || `Camera ${index + 1}`}
+      </option>
+    ))}
+  </select>
+)}
+
+<button
+  onClick={endSession}
+  title="End session"
+  className="w-14 h-12 bg-red-500 hover:bg-red-600 text-white rounded-2xl flex items-center justify-center transition-all"
+>
+  <Phone className="w-5 h-5 rotate-[135deg]" />
+</button>
 
         {role === "agent" && (
           <>
