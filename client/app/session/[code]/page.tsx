@@ -57,6 +57,9 @@ function SessionPageInner() {
   const [lineWeight, setLineWeight] = useState(3);
   const laserTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const dataChannelRef = useRef<any>(null);
+const customerCanvasRef = useRef<HTMLCanvasElement>(null);
+
   // UI
   const [tab, setTab] = useState<"chat" | "ai">("chat");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -189,100 +192,174 @@ async function initMedia(deviceId?: string, facing?: "user" | "environment") {
   });
 }
   function handleStream(call: MediaConnection) {
-    call.on("stream", (remoteStream) => {
-      console.log("[PeerJS] got remote stream");
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-      }
-      setRemoteConnected(true);
-    });
-
-    call.on("close", () => {
-      console.log("[PeerJS] call closed");
-      setRemoteConnected(false);
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    });
-
-    call.on("error", (err) => {
-      console.error("[PeerJS] call error:", err);
-      setRemoteConnected(false);
-    });
-
-    callRef.current = call;
-  }
-
-  function initWebRTC(sessionCode: string, sessionRole: string) {
-    const myId = sessionRole === "agent"
-      ? `agent-${sessionCode}`
-      : `cust-${sessionCode}-${Math.random().toString(36).slice(2, 9)}`;
-
-    console.log("[PeerJS] my id:", myId, "| role:", sessionRole);
-
-    const peer = new Peer(myId, {
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-        ],
-      },
-    });
-    peerRef.current = peer;
-
- peer.on("open", async (id) => {
-  console.log("[PeerJS] ✅ peer open, id:", id);
-
-  if (sessionRole === "customer") {
-    await waitForStream();
-
-    if (!streamRef.current) {
-      setMediaError("Camera/mic unavailable — cannot start call.");
-      return;
+  call.on("stream", (remoteStream) => {
+    console.log("[PeerJS] got remote stream");
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
     }
+    setRemoteConnected(true);
+  });
 
-    // Ensure audio tracks are enabled
-    streamRef.current.getAudioTracks().forEach(t => { t.enabled = true; });
-    streamRef.current.getVideoTracks().forEach(t => { t.enabled = true; });
+  call.on("close", () => {
+    setRemoteConnected(false);
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+  });
 
-    console.log("[PeerJS] tracks —", streamRef.current.getTracks().map(t => `${t.kind}:${t.enabled}`));
+  call.on("error", () => setRemoteConnected(false));
+  callRef.current = call;
+}
 
-    const call = peer.call(`agent-${sessionCode}`, streamRef.current);
-    if (call) handleStream(call);
-    else console.error("[PeerJS] call() returned null");
+function drawAnnotationOnCustomerCanvas(data: any) {
+  const canvas = customerCanvasRef.current;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d")!;
+
+  if (data.type === "clear") {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
   }
-});
-    peer.on("call", async (call) => {
-      console.log("[PeerJS] incoming call from:", call.peer);
+
+  ctx.strokeStyle = data.color;
+  ctx.lineWidth = data.weight;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  if (data.type === "pen") {
+    ctx.beginPath();
+    ctx.moveTo(data.x1, data.y1);
+    ctx.lineTo(data.x2, data.y2);
+    ctx.stroke();
+  } else if (data.type === "rectangle") {
+    ctx.strokeRect(data.x1, data.y1, data.x2 - data.x1, data.y2 - data.y1);
+  } else if (data.type === "circle") {
+    const r = Math.sqrt((data.x2 - data.x1) ** 2 + (data.y2 - data.y1) ** 2);
+    ctx.beginPath();
+    ctx.arc(data.x1, data.y1, r, 0, 2 * Math.PI);
+    ctx.stroke();
+  } else if (data.type === "arrow") {
+    ctx.beginPath();
+    ctx.moveTo(data.x1, data.y1);
+    ctx.lineTo(data.x2, data.y2);
+    ctx.stroke();
+    const angle = Math.atan2(data.y2 - data.y1, data.x2 - data.x1);
+    ctx.beginPath();
+    ctx.moveTo(data.x2, data.y2);
+    ctx.lineTo(data.x2 - 20 * Math.cos(angle - 0.4), data.y2 - 20 * Math.sin(angle - 0.4));
+    ctx.lineTo(data.x2 - 20 * Math.cos(angle + 0.4), data.y2 - 20 * Math.sin(angle + 0.4));
+    ctx.closePath();
+    ctx.fillStyle = data.color;
+    ctx.fill();
+  } else if (data.type === "laser") {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const gradient = ctx.createRadialGradient(data.x2, data.y2, 0, data.x2, data.y2, 24);
+    gradient.addColorStop(0, "rgba(255, 50, 50, 0.9)");
+    gradient.addColorStop(0.3, "rgba(255, 50, 50, 0.4)");
+    gradient.addColorStop(1, "rgba(255, 50, 50, 0)");
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(data.x2, data.y2, 24, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.beginPath();
+    ctx.arc(data.x2, data.y2, 4, 0, 2 * Math.PI);
+    ctx.fill();
+    setTimeout(() => ctx.clearRect(0, 0, canvas.width, canvas.height), 300);
+  } else if (data.type === "stamp") {
+    ctx.beginPath();
+    ctx.arc(data.x1, data.y1, 18, 0, 2 * Math.PI);
+    ctx.fillStyle = data.color;
+    ctx.fill();
+    ctx.fillStyle = "#0A1628";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(data.n), data.x1, data.y1);
+  }
+}
+
+function sendAnnotation(data: object) {
+  const conn = dataChannelRef.current;
+  if (conn && conn.open) conn.send(data);
+}
+
+function initWebRTC(sessionCode: string, sessionRole: string) {
+  const myId = sessionRole === "agent"
+    ? `agent-${sessionCode}`
+    : `cust-${sessionCode}-${Math.random().toString(36).slice(2, 9)}`;
+
+  console.log("[PeerJS] my id:", myId, "| role:", sessionRole);
+
+  const peer = new Peer(myId, {
+    config: {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+      ],
+    },
+  });
+  peerRef.current = peer;
+
+  peer.on("open", async (id) => {
+    console.log("[PeerJS] ✅ peer open, id:", id);
+
+    if (sessionRole === "customer") {
       await waitForStream();
-      if (!streamRef.current) {
-        setMediaError("Camera/mic unavailable — cannot answer call.");
-        return;
-      }
-      call.answer(streamRef.current);
-      handleStream(call);
-    });
+      if (!streamRef.current) { setMediaError("Camera/mic unavailable — cannot start call."); return; }
 
-    peer.on("disconnected", () => {
-      console.warn("[PeerJS] disconnected, attempting reconnect...");
-      peer.reconnect();
-    });
+      streamRef.current.getAudioTracks().forEach(t => { t.enabled = true; });
+      streamRef.current.getVideoTracks().forEach(t => { t.enabled = true; });
 
-    peer.on("error", (err) => {
-      console.error("[PeerJS] ❌ error:", err.type, err);
-      if (err.type === "peer-unavailable") {
-        setMediaError("Waiting for the other person to join...");
-      } else if (err.type === "unavailable-id") {
-        setMediaError("Session ID conflict — try refreshing.");
-      } else {
-        setMediaError("Video connection error: " + err.type);
-      }
-    });
+      console.log("[PeerJS] tracks —", streamRef.current.getTracks().map(t => `${t.kind}:${t.enabled}`));
 
-    peer.on("close", () => {
-      console.log("[PeerJS] peer closed");
-      setRemoteConnected(false);
-    });
-  }
+      const call = peer.call(`agent-${sessionCode}`, streamRef.current);
+      if (call) handleStream(call);
+      else console.error("[PeerJS] call() returned null");
+
+      // Customer opens data channel to agent for receiving annotations
+      const conn = peer.connect(`agent-${sessionCode}`, { reliable: true });
+      conn.on("open", () => {
+        console.log("[PeerJS] data channel open (customer)");
+        dataChannelRef.current = conn;
+      });
+      conn.on("data", (data: any) => {
+        drawAnnotationOnCustomerCanvas(data);
+      });
+    }
+  });
+
+  peer.on("call", async (call) => {
+    console.log("[PeerJS] incoming call from:", call.peer);
+    await waitForStream();
+    if (!streamRef.current) { setMediaError("Camera/mic unavailable — cannot answer call."); return; }
+    call.answer(streamRef.current);
+    handleStream(call);
+  });
+
+  // Agent receives data connection from customer
+  peer.on("connection", (conn) => {
+    console.log("[PeerJS] data connection from:", conn.peer);
+    dataChannelRef.current = conn;
+    conn.on("open", () => console.log("[PeerJS] data channel open (agent)"));
+  });
+
+  peer.on("disconnected", () => {
+    console.warn("[PeerJS] disconnected, attempting reconnect...");
+    peer.reconnect();
+  });
+
+  peer.on("error", (err) => {
+    console.error("[PeerJS] ❌ error:", err.type, err);
+    if (err.type === "peer-unavailable") setMediaError("Waiting for the other person to join...");
+    else if (err.type === "unavailable-id") setMediaError("Session ID conflict — try refreshing.");
+    else setMediaError("Video connection error: " + err.type);
+  });
+
+  peer.on("close", () => {
+    console.log("[PeerJS] peer closed");
+    setRemoteConnected(false);
+  });
+}
 
   async function replaceTracksOnCall(newStream: MediaStream) {
     const call = callRef.current;
@@ -428,90 +505,90 @@ setSending(false);  }
   }
 
   function canvasMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
-    if (!isDrawing || !activeTool || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d")!;
-    const pos = getCanvasPos(e, canvasRef.current);
+  if (!isDrawing || !activeTool || !canvasRef.current) return;
+  const ctx = canvasRef.current.getContext("2d")!;
+  const pos = getCanvasPos(e, canvasRef.current);
 
-    if (activeTool === "pen") {
-      ctx.strokeStyle = toolColor;
-      ctx.lineWidth = lineWeight;
-      ctx.lineCap = "round"; ctx.lineJoin = "round";
-      ctx.beginPath(); ctx.moveTo(drawStart.x, drawStart.y);
-      ctx.lineTo(pos.x, pos.y); ctx.stroke();
-      setDrawStart(pos);
-    } else if (activeTool === "laser") {
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      const gradient = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 24);
-      gradient.addColorStop(0, "rgba(255, 50, 50, 0.9)");
-      gradient.addColorStop(0.3, "rgba(255, 50, 50, 0.4)");
-      gradient.addColorStop(1, "rgba(255, 50, 50, 0)");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 24, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 4, 0, 2 * Math.PI);
-      ctx.fill();
-
-      if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
-      laserTimeoutRef.current = setTimeout(() => {
-        ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
-      }, 300);
-    }
+  if (activeTool === "pen") {
+    ctx.strokeStyle = toolColor; ctx.lineWidth = lineWeight;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(drawStart.x, drawStart.y);
+    ctx.lineTo(pos.x, pos.y); ctx.stroke();
+    sendAnnotation({ type: "pen", x1: drawStart.x, y1: drawStart.y, x2: pos.x, y2: pos.y, color: toolColor, weight: lineWeight });
+    setDrawStart(pos);
+  } else if (activeTool === "laser") {
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const gradient = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 24);
+    gradient.addColorStop(0, "rgba(255, 50, 50, 0.9)");
+    gradient.addColorStop(0.3, "rgba(255, 50, 50, 0.4)");
+    gradient.addColorStop(1, "rgba(255, 50, 50, 0)");
+    ctx.fillStyle = gradient;
+    ctx.beginPath(); ctx.arc(pos.x, pos.y, 24, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.beginPath(); ctx.arc(pos.x, pos.y, 4, 0, 2 * Math.PI); ctx.fill();
+    sendAnnotation({ type: "laser", x2: pos.x, y2: pos.y, color: toolColor, weight: lineWeight });
+    if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
+    laserTimeoutRef.current = setTimeout(() => {
+      ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+    }, 300);
   }
+}
 
   function canvasMouseUp(e: React.MouseEvent<HTMLCanvasElement>) {
-    if (!isDrawing || !activeTool || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d")!;
-    const pos = getCanvasPos(e, canvasRef.current);
-    ctx.strokeStyle = toolColor; ctx.lineWidth = lineWeight; ctx.lineCap = "round";
+  if (!isDrawing || !activeTool || !canvasRef.current) return;
+  const ctx = canvasRef.current.getContext("2d")!;
+  const pos = getCanvasPos(e, canvasRef.current);
+  ctx.strokeStyle = toolColor; ctx.lineWidth = lineWeight; ctx.lineCap = "round";
 
-    if (activeTool === "rectangle") {
-      ctx.strokeRect(drawStart.x, drawStart.y, pos.x - drawStart.x, pos.y - drawStart.y);
-    } else if (activeTool === "circle") {
-      const r = Math.sqrt((pos.x - drawStart.x) ** 2 + (pos.y - drawStart.y) ** 2);
-      ctx.beginPath(); ctx.arc(drawStart.x, drawStart.y, r, 0, 2 * Math.PI); ctx.stroke();
-    } else if (activeTool === "arrow") {
-      ctx.beginPath(); ctx.moveTo(drawStart.x, drawStart.y);
-      ctx.lineTo(pos.x, pos.y); ctx.stroke();
-      const angle = Math.atan2(pos.y - drawStart.y, pos.x - drawStart.x);
-      ctx.beginPath(); ctx.moveTo(pos.x, pos.y);
-      ctx.lineTo(pos.x - 20 * Math.cos(angle - 0.4), pos.y - 20 * Math.sin(angle - 0.4));
-      ctx.lineTo(pos.x - 20 * Math.cos(angle + 0.4), pos.y - 20 * Math.sin(angle + 0.4));
-      ctx.closePath(); ctx.fillStyle = toolColor; ctx.fill();
-    } else if (activeTool === "laser") {
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    }
-    setIsDrawing(false);
+  if (activeTool === "rectangle") {
+    ctx.strokeRect(drawStart.x, drawStart.y, pos.x - drawStart.x, pos.y - drawStart.y);
+    sendAnnotation({ type: "rectangle", x1: drawStart.x, y1: drawStart.y, x2: pos.x, y2: pos.y, color: toolColor, weight: lineWeight });
+  } else if (activeTool === "circle") {
+    const r = Math.sqrt((pos.x - drawStart.x) ** 2 + (pos.y - drawStart.y) ** 2);
+    ctx.beginPath(); ctx.arc(drawStart.x, drawStart.y, r, 0, 2 * Math.PI); ctx.stroke();
+    sendAnnotation({ type: "circle", x1: drawStart.x, y1: drawStart.y, x2: pos.x, y2: pos.y, color: toolColor, weight: lineWeight });
+  } else if (activeTool === "arrow") {
+    ctx.beginPath(); ctx.moveTo(drawStart.x, drawStart.y);
+    ctx.lineTo(pos.x, pos.y); ctx.stroke();
+    const angle = Math.atan2(pos.y - drawStart.y, pos.x - drawStart.x);
+    ctx.beginPath(); ctx.moveTo(pos.x, pos.y);
+    ctx.lineTo(pos.x - 20 * Math.cos(angle - 0.4), pos.y - 20 * Math.sin(angle - 0.4));
+    ctx.lineTo(pos.x - 20 * Math.cos(angle + 0.4), pos.y - 20 * Math.sin(angle + 0.4));
+    ctx.closePath(); ctx.fillStyle = toolColor; ctx.fill();
+    sendAnnotation({ type: "arrow", x1: drawStart.x, y1: drawStart.y, x2: pos.x, y2: pos.y, color: toolColor, weight: lineWeight });
+  } else if (activeTool === "laser") {
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
   }
+  setIsDrawing(false);
+}
 
-  function clearCanvas() {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (ctx && canvasRef.current)
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+function clearCanvas() {
+  const ctx = canvasRef.current?.getContext("2d");
+  if (ctx && canvasRef.current)
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  sendAnnotation({ type: "clear" });
+}
+
+function stampNumber(n: number) {
+  if (!canvasRef.current) return;
+  setActiveTool(null);
+  const canvas = canvasRef.current;
+  function placeStamp(e: MouseEvent) {
+    const ctx = canvas.getContext("2d")!;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    ctx.beginPath(); ctx.arc(x, y, 18, 0, 2 * Math.PI);
+    ctx.fillStyle = toolColor; ctx.fill();
+    ctx.fillStyle = "#0A1628";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(n), x, y);
+    sendAnnotation({ type: "stamp", x1: x, y1: y, n, color: toolColor });
+    canvas.removeEventListener("click", placeStamp);
   }
-
-  function stampNumber(n: number) {
-    if (!canvasRef.current) return;
-    setActiveTool(null);
-    const canvas = canvasRef.current;
-    function placeStamp(e: MouseEvent) {
-      const ctx = canvas.getContext("2d")!;
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-      ctx.beginPath(); ctx.arc(x, y, 18, 0, 2 * Math.PI);
-      ctx.fillStyle = toolColor; ctx.fill();
-      ctx.fillStyle = "#0A1628";
-      ctx.font = "bold 16px sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(String(n), x, y);
-      canvas.removeEventListener("click", placeStamp);
-    }
-    canvas.addEventListener("click", placeStamp);
-  }
-
+  canvas.addEventListener("click", placeStamp);
+}
   // ── AI ─────────────────────────────────────────────────────────────────────
 
   async function generateAISummary() {
@@ -553,10 +630,16 @@ setSending(false);  }
     return (
       <div className="h-screen bg-black flex flex-col overflow-hidden relative">
 
-        <video
+      <video
           ref={remoteVideoRef}
           autoPlay playsInline
           className="absolute inset-0 w-full h-full object-cover"
+        />
+        <canvas
+          ref={customerCanvasRef}
+          width={1280}
+          height={720}
+          className="absolute inset-0 w-full h-full pointer-events-none"
         />
 
         {!remoteConnected && (
