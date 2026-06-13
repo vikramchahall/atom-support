@@ -443,12 +443,18 @@ function initWebRTC(sessionCode: string, sessionRole: string) {
 
   // ── Chat ───────────────────────────────────────────────────────────────────
 
-  async function sendMessage() {
-    if (!chatInput.trim() || !sessionId || sending) return;
-    setSending(true);
-    const msg = chatInput.trim();
-    setChatInput("");
-setSending(false);  }
+async function sendMessage() {
+  if (!chatInput.trim() || !sessionId || sending) return;
+  setSending(true);
+  const msg = chatInput.trim();
+  setChatInput("");
+  await supabase.from("messages").insert({
+    session_id: sessionId,
+    sender: name,
+    message: msg,
+  });
+  setSending(false);
+}
 
   // ── Controls ───────────────────────────────────────────────────────────────
 
