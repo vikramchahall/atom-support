@@ -114,7 +114,7 @@ export default function LandingPage() {
                 <div className="text-white/40 text-sm">Live Video Feed</div>
               </div>
               <div className="col-span-1 space-y-2">
-                {["Session ID", "Participants", "Duration", "Status"].map((t) => (
+                {["Session ID", "Customer", "Duration", "Status"].map((t) => (
                   <div key={t} className="glass-dark rounded-xl px-3 py-2 text-xs text-white/50">
                     {t}
                   </div>
