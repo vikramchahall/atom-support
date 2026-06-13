@@ -107,12 +107,10 @@ export function useWebRTC(
   function initSocket(code: string, role: string, name: string) {
     const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
 
-    // ── KEY DEBUG LOGS ──────────────────────────────────────
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.log("[Socket] NEXT_PUBLIC_SERVER_URL =", serverUrl);
     console.log("[Socket] connecting as:", name, "| role:", role, "| session:", code);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    // ────────────────────────────────────────────────────────
 
     if (!serverUrl) {
       console.error("[Socket] ❌ NEXT_PUBLIC_SERVER_URL is undefined! Check Vercel env vars.");
@@ -121,7 +119,7 @@ export function useWebRTC(
     }
 
     const socket = io(serverUrl, {
-      transports: ["polling", "websocket"], // polling first for Railway
+      transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,

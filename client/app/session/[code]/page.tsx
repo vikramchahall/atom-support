@@ -10,17 +10,10 @@ import {
   FlipHorizontal, Minus, Paperclip, SwitchCamera
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { io, Socket } from "socket.io-client";
+import { useWebRTC } from "@/hooks/useWebRTC";
 
 type Message = { id: string; sender: string; message: string; created_at: string };
 type Tool = "pen" | "arrow" | "rectangle" | "circle" | "text" | "laser" | null;
-
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-  ],
-};
 
 function SessionPageInner() {
   const params = useParams();
@@ -32,7 +25,6 @@ function SessionPageInner() {
 
   // Media
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -42,10 +34,15 @@ function SessionPageInner() {
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [isMobile, setIsMobile] = useState(false);
 
-  // WebRTC
-  const socketRef = useRef<Socket | null>(null);
-  const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const [remoteConnected, setRemoteConnected] = useState(false);
+  // WebRTC (from hook)
+  const {
+    remoteVideoRef,
+    socketRef,
+    remoteConnected,
+    initSocket,
+    destroyWebRTC,
+    replaceTracksOnAllPCs,
+  } = useWebRTC(streamRef, setMediaError);
 
   // Chat
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,11 +72,11 @@ function SessionPageInner() {
 
   useEffect(() => {
     setIsMobile(/iPhone|iPad|Android/i.test(navigator.userAgent));
-    initMedia().then(() => initSession());
+    initMedia();
+    initSession();
     return () => {
       streamRef.current?.getTracks().forEach(t => t.stop());
-      pcsRef.current.forEach(pc => pc.close());
-      socketRef.current?.disconnect();
+      destroyWebRTC();
       if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
     };
   }, []);
@@ -141,7 +138,7 @@ function SessionPageInner() {
     setSelectedCamera(deviceId);
     const newStream = await initMedia(deviceId);
     if (!newStream) return;
-    replaceVideoTrack(newStream);
+    await replaceTracksOnAllPCs(newStream);
   }
 
   async function flipCamera() {
@@ -149,46 +146,7 @@ function SessionPageInner() {
     setFacingMode(next);
     const newStream = await initMedia(undefined, next);
     if (!newStream) return;
-    replaceVideoTrack(newStream);
-  }
-
-  function replaceVideoTrack(newStream: MediaStream) {
-    const videoTrack = newStream.getVideoTracks()[0];
-    pcsRef.current.forEach(pc => {
-      const sender = pc.getSenders().find(s => s.track?.kind === "video");
-      if (sender && videoTrack) sender.replaceTrack(videoTrack);
-    });
-  }
-
-  // ── WebRTC ─────────────────────────────────────────────────────────────────
-
-  function createPeerConnection(remoteSocketId: string): RTCPeerConnection {
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    pcsRef.current.set(remoteSocketId, pc);
-
-    streamRef.current?.getTracks().forEach(track => {
-      pc.addTrack(track, streamRef.current!);
-    });
-
-    pc.onicecandidate = ({ candidate }) => {
-      if (candidate) socketRef.current?.emit("ice-candidate", { to: remoteSocketId, candidate });
-    };
-
-    pc.ontrack = ({ streams }) => {
-      if (remoteVideoRef.current && streams[0]) {
-        remoteVideoRef.current.srcObject = streams[0];
-        setRemoteConnected(true);
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        setRemoteConnected(false);
-        pcsRef.current.delete(remoteSocketId);
-      }
-    };
-
-    return pc;
+    await replaceTracksOnAllPCs(newStream);
   }
 
   // ── Session ────────────────────────────────────────────────────────────────
@@ -243,56 +201,8 @@ function SessionPageInner() {
         setParticipantCount(data?.length || 1);
       }).subscribe();
 
-    // Socket signaling
-    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL!, { transports: ["websocket"] });
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      socket.emit("join-session", { sessionCode: code, role, name });
-    });
-
-    socket.on("existing-peers", async ({ peers }: { peers: string[] }) => {
-      for (const peerId of peers) {
-        const pc = createPeerConnection(peerId);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit("offer", { to: peerId, offer });
-      }
-    });
-
-    socket.on("peer-joined", ({ socketId }: { socketId: string }) => {
-      createPeerConnection(socketId);
-    });
-
-    socket.on("offer", async ({ from, offer }: any) => {
-      let pc = pcsRef.current.get(from);
-      if (!pc) pc = createPeerConnection(from);
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit("answer", { to: from, answer });
-    });
-
-    socket.on("answer", async ({ from, answer }: any) => {
-      const pc = pcsRef.current.get(from);
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    });
-
-    socket.on("ice-candidate", async ({ from, candidate }: any) => {
-      const pc = pcsRef.current.get(from);
-      if (pc && candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-
-    socket.on("peer-left", ({ socketId }: any) => {
-      const pc = pcsRef.current.get(socketId);
-      if (pc) { pc.close(); pcsRef.current.delete(socketId); }
-      setRemoteConnected(false);
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    });
-
-    socket.on("connect_error", () => {
-      setMediaError("Video server unreachable — chat still works.");
-    });
+    // Hand off to WebRTC hook — it waits for media internally
+    initSocket(code, role, name);
   }
 
   // ── Chat ───────────────────────────────────────────────────────────────────
@@ -332,8 +242,7 @@ function SessionPageInner() {
         .eq("session_id", sessionId).eq("name", name);
     }
     streamRef.current?.getTracks().forEach(t => t.stop());
-    pcsRef.current.forEach(pc => pc.close());
-    socketRef.current?.disconnect();
+    destroyWebRTC();
     router.push(role === "agent" ? "/dashboard" : "/");
   }
 
@@ -374,9 +283,7 @@ function SessionPageInner() {
       ctx.lineTo(pos.x, pos.y); ctx.stroke();
       setDrawStart(pos);
     } else if (activeTool === "laser") {
-      // Laser: draw fading red dot
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      // Draw glowing laser spot
       const gradient = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 24);
       gradient.addColorStop(0, "rgba(255, 50, 50, 0.9)");
       gradient.addColorStop(0.3, "rgba(255, 50, 50, 0.4)");
@@ -385,13 +292,11 @@ function SessionPageInner() {
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, 24, 0, 2 * Math.PI);
       ctx.fill();
-      // Inner bright dot
       ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, 4, 0, 2 * Math.PI);
       ctx.fill();
 
-      // Auto-clear after inactivity
       if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
       laserTimeoutRef.current = setTimeout(() => {
         ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
@@ -491,14 +396,12 @@ function SessionPageInner() {
     return (
       <div className="h-screen bg-black flex flex-col overflow-hidden relative">
 
-        {/* Full-screen remote video (agent's feed / main) */}
         <video
           ref={remoteVideoRef}
           autoPlay playsInline
           className="absolute inset-0 w-full h-full object-cover"
         />
 
-        {/* Waiting overlay */}
         {!remoteConnected && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
             <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4">
@@ -509,7 +412,6 @@ function SessionPageInner() {
           </div>
         )}
 
-        {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 pt-safe pt-3 pb-2"
           style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)" }}>
           <div className="flex items-center gap-2">
@@ -522,7 +424,6 @@ function SessionPageInner() {
           </div>
         </div>
 
-        {/* Local video PiP — bottom left */}
         <div className="absolute bottom-28 left-4 z-20 w-24 h-32 sm:w-32 sm:h-44 rounded-2xl overflow-hidden border-2 border-white/30 shadow-xl bg-zinc-900">
           <video ref={localVideoRef} autoPlay muted playsInline
             className="w-full h-full object-cover"
@@ -535,14 +436,12 @@ function SessionPageInner() {
           )}
         </div>
 
-        {/* Chat panel — slides up from bottom */}
         {chatOpen && (
           <div className="absolute bottom-24 left-0 right-0 z-30 mx-3"
             style={{ maxHeight: "45vh" }}>
             <div className="bg-black/80 backdrop-blur-md rounded-3xl border border-white/10 flex flex-col overflow-hidden"
               style={{ maxHeight: "45vh" }}>
 
-              {/* Chat header */}
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10 flex-shrink-0">
                 <span className="text-white text-xs font-semibold">Chat</span>
                 <button onClick={() => setChatOpen(false)}
@@ -551,7 +450,6 @@ function SessionPageInner() {
                 </button>
               </div>
 
-              {/* Messages */}
               <div className="flex-1 overflow-y-auto p-3 space-y-2">
                 {messages.length === 0 && (
                   <p className="text-white/30 text-xs text-center mt-4">No messages yet</p>
@@ -570,7 +468,6 @@ function SessionPageInner() {
                 <div ref={chatEndRef} />
               </div>
 
-              {/* Input */}
               <div className="p-2.5 border-t border-white/10 flex-shrink-0">
                 <div className="flex gap-2">
                   <input type="text" placeholder="Message..."
@@ -590,32 +487,27 @@ function SessionPageInner() {
           </div>
         )}
 
-        {/* Bottom controls */}
         <div className="absolute bottom-0 left-0 right-0 z-20 pb-safe pb-4 pt-3 px-4"
           style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7), transparent)" }}>
           <div className="flex items-center justify-center gap-3">
 
-            {/* Mic */}
             <button onClick={toggleMic}
               className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-lg
                 ${micOn ? "bg-white/20 text-white" : "bg-red-500 text-white"}`}>
               {micOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
             </button>
 
-            {/* Cam */}
             <button onClick={toggleCam}
               className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-lg
                 ${camOn ? "bg-white/20 text-white" : "bg-red-500 text-white"}`}>
               {camOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
             </button>
 
-            {/* End call */}
             <button onClick={endSession}
               className="w-16 h-12 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg transition-all">
               <Phone className="w-5 h-5 rotate-[135deg]" />
             </button>
 
-            {/* Flip camera (mobile) */}
             {isMobile && (
               <button onClick={flipCamera}
                 className="w-12 h-12 rounded-full bg-white/20 text-white flex items-center justify-center shadow-lg">
@@ -623,7 +515,6 @@ function SessionPageInner() {
               </button>
             )}
 
-            {/* Desktop camera picker */}
             {!isMobile && devices.length > 1 && (
               <select value={selectedCamera} onChange={(e) => switchCamera(e.target.value)}
                 className="bg-white/20 text-white text-xs rounded-full px-3 py-2 border border-white/20 focus:outline-none max-w-[110px]">
@@ -635,7 +526,6 @@ function SessionPageInner() {
               </select>
             )}
 
-            {/* Chat toggle */}
             <button onClick={() => setChatOpen(v => !v)}
               className="w-12 h-12 rounded-full bg-white/20 text-white flex items-center justify-center relative shadow-lg">
               <MessageSquare className="w-5 h-5" />
@@ -647,7 +537,6 @@ function SessionPageInner() {
             </button>
           </div>
 
-          {/* Media error */}
           {mediaError && (
             <p className="text-amber-400 text-xs text-center mt-2">{mediaError}</p>
           )}
@@ -661,7 +550,6 @@ function SessionPageInner() {
   return (
     <div className="h-screen bg-brand-navy flex flex-col overflow-hidden">
 
-      {/* TOP BAR */}
       <div className="h-14 bg-brand-navy-mid border-b border-white/10 flex items-center justify-between px-4 flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className={`w-2 h-2 rounded-full animate-pulse ${remoteConnected ? "bg-green-400" : "bg-amber-400"}`} />
@@ -684,13 +572,10 @@ function SessionPageInner() {
         </div>
       </div>
 
-      {/* MAIN */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* LEFT TOOLBAR */}
         <div className="w-14 bg-brand-navy-mid border-r border-white/10 flex flex-col items-center py-3 gap-1.5 flex-shrink-0 overflow-y-auto">
 
-          {/* Pointer type label */}
           <p className="text-white/30 text-[8px] text-center uppercase tracking-widest leading-none mb-1">Tools</p>
 
           {drawingTools.map((t) => (
@@ -706,7 +591,6 @@ function SessionPageInner() {
 
           <div className="border-t border-white/10 w-7 my-1" />
 
-          {/* Line weight */}
           <p className="text-white/30 text-[8px] text-center leading-none">SIZE</p>
           {[2, 4, 7].map(w => (
             <button key={w} onClick={() => setLineWeight(w)}
@@ -719,7 +603,6 @@ function SessionPageInner() {
 
           <div className="border-t border-white/10 w-7 my-1" />
 
-          {/* Colors */}
           <p className="text-white/30 text-[8px] text-center leading-none">COLOR</p>
           {colors.map((c) => (
             <button key={c} onClick={() => setToolColor(c)} style={{ background: c }}
@@ -729,7 +612,6 @@ function SessionPageInner() {
 
           <div className="border-t border-white/10 w-7 my-1" />
 
-          {/* Stamps */}
           <p className="text-white/30 text-[8px] text-center leading-none">STAMP</p>
           {stampNumbers.map((n) => (
             <button key={n} onClick={() => stampNumber(n)}
@@ -747,9 +629,7 @@ function SessionPageInner() {
           </button>
         </div>
 
-        {/* CENTER VIDEO */}
         <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
-          {/* Customer's camera = remote feed */}
           <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
 
           {!remoteConnected && (
@@ -763,7 +643,6 @@ function SessionPageInner() {
             </div>
           )}
 
-          {/* Annotation canvas */}
           <canvas ref={canvasRef} width={1280} height={720}
             onMouseDown={canvasMouseDown} onMouseMove={canvasMouseMove}
             onMouseUp={canvasMouseUp} onMouseLeave={() => {
@@ -773,7 +652,6 @@ function SessionPageInner() {
             className="absolute inset-0 w-full h-full"
             style={{ cursor: activeTool ? "crosshair" : "default" }} />
 
-          {/* Agent PiP (agent's own camera) */}
           <div className="absolute bottom-4 right-4 w-28 h-20 rounded-2xl overflow-hidden border-2 border-white/20 shadow-modal bg-brand-navy-mid">
             <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
             {!camOn && (
@@ -783,13 +661,11 @@ function SessionPageInner() {
             )}
           </div>
 
-          {/* Session badge */}
           <div className="absolute top-4 left-4 glass-dark rounded-2xl px-3 py-2">
             <p className="text-white/40 text-xs">Session</p>
             <p className="text-white font-mono font-bold text-lg leading-none">{code}</p>
           </div>
 
-          {/* Active tool badge */}
           {activeTool && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 glass-dark rounded-full px-4 py-2 text-white/80 text-xs capitalize flex items-center gap-2">
               <div className="w-2 h-2 rounded-full" style={{ background: activeTool === "laser" ? "#ef4444" : toolColor }} />
@@ -801,11 +677,9 @@ function SessionPageInner() {
           )}
         </div>
 
-        {/* RIGHT PANEL — collapsible */}
         {chatOpen ? (
           <div className="w-72 bg-brand-navy-mid border-l border-white/10 flex flex-col flex-shrink-0">
 
-            {/* Panel header with collapse */}
             <div className="flex border-b border-white/10 flex-shrink-0 items-center">
               {[{ id: "chat", label: "Chat" }, { id: "ai", label: "AI Copilot" }].map((t) => (
                 <button key={t.id} onClick={() => setTab(t.id as "chat" | "ai")}
@@ -817,7 +691,6 @@ function SessionPageInner() {
                   )}
                 </button>
               ))}
-              {/* Collapse button */}
               <button onClick={() => setChatOpen(false)} title="Hide panel"
                 className="px-3 text-white/30 hover:text-white transition-colors flex-shrink-0">
                 <ChevronRight className="w-4 h-4" />
@@ -905,7 +778,6 @@ function SessionPageInner() {
             )}
           </div>
         ) : (
-          /* Collapsed — floating button to reopen */
           <button onClick={() => setChatOpen(true)}
             className="absolute right-4 top-1/2 -translate-y-1/2 z-30 w-10 h-10 bg-brand-navy-mid border border-white/20 rounded-xl flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all shadow-lg">
             <MessageSquare className="w-4 h-4" />
@@ -918,7 +790,6 @@ function SessionPageInner() {
         )}
       </div>
 
-      {/* BOTTOM CONTROLS */}
       <div className="h-20 bg-brand-navy-mid border-t border-white/10 flex items-center justify-center gap-3 flex-shrink-0 flex-wrap px-4">
         <button onClick={toggleMic}
           className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all
