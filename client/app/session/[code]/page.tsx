@@ -66,17 +66,17 @@ function SessionPageInner() {
   const [participantCount, setParticipantCount] = useState(1);
   const [sessionReady, setSessionReady] = useState(false);
 
-  useEffect(() => {
-    setIsMobile(/iPhone|iPad|Android/i.test(navigator.userAgent));
-    initMedia();
+useEffect(() => {
+  setIsMobile(/iPhone|iPad|Android/i.test(navigator.userAgent));
+  initMedia().then(() => {
     initSession();
-    return () => {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      destroyWebRTC();
-      if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
-    };
-  }, []);
-
+  });
+  return () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    destroyWebRTC();
+    if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
+  };
+}, []);
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -147,23 +147,21 @@ function SessionPageInner() {
 
   // ── WebRTC (PeerJS) ────────────────────────────────────────────────────────
 
-  async function waitForStream(timeoutMs = 15000): Promise<boolean> {
-    if (streamRef.current) return true;
-    return new Promise<boolean>((resolve) => {
-      const start = Date.now();
-      const interval = setInterval(() => {
-        if (streamRef.current) {
-          clearInterval(interval);
-          resolve(true);
-        } else if (Date.now() - start > timeoutMs) {
-          clearInterval(interval);
-          console.warn("[WebRTC] waitForStream timed out");
-          resolve(false);
-        }
-      }, 100);
-    });
-  }
-
+ async function waitForStream(timeoutMs = 15000): Promise<boolean> {
+  if (streamRef.current?.getAudioTracks().length) return true;
+  return new Promise<boolean>((resolve) => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (streamRef.current?.getAudioTracks().length) {
+        clearInterval(interval);
+        resolve(true);
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(interval);
+        resolve(false);
+      }
+    }, 100);
+  });
+}
   function handleStream(call: MediaConnection) {
     call.on("stream", (remoteStream) => {
       console.log("[PeerJS] got remote stream");
@@ -205,22 +203,28 @@ function SessionPageInner() {
     });
     peerRef.current = peer;
 
-    peer.on("open", async (id) => {
-      console.log("[PeerJS] ✅ peer open, id:", id);
+ peer.on("open", async (id) => {
+  console.log("[PeerJS] ✅ peer open, id:", id);
 
-      if (sessionRole === "customer") {
-        await waitForStream();
-        if (!streamRef.current) {
-          setMediaError("Camera/mic unavailable — cannot start call.");
-          return;
-        }
-        console.log("[PeerJS] calling agent:", `agent-${sessionCode}`);
-        const call = peer.call(`agent-${sessionCode}`, streamRef.current);
-        if (call) handleStream(call);
-        else console.error("[PeerJS] call() returned null");
-      }
-    });
+  if (sessionRole === "customer") {
+    await waitForStream();
 
+    if (!streamRef.current) {
+      setMediaError("Camera/mic unavailable — cannot start call.");
+      return;
+    }
+
+    // Ensure audio tracks are enabled
+    streamRef.current.getAudioTracks().forEach(t => { t.enabled = true; });
+    streamRef.current.getVideoTracks().forEach(t => { t.enabled = true; });
+
+    console.log("[PeerJS] tracks —", streamRef.current.getTracks().map(t => `${t.kind}:${t.enabled}`));
+
+    const call = peer.call(`agent-${sessionCode}`, streamRef.current);
+    if (call) handleStream(call);
+    else console.error("[PeerJS] call() returned null");
+  }
+});
     peer.on("call", async (call) => {
       console.log("[PeerJS] incoming call from:", call.peer);
       await waitForStream();
