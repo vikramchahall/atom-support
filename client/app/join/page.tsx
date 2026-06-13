@@ -49,16 +49,16 @@ export default function JoinPage() {
   }
 
   const permissions = [
-    { icon: <Camera className="w-5 h-5" />, color: "bg-blue-500", label: "Camera", desc: "Required for video support" },
-    { icon: <Mic className="w-5 h-5" />, color: "bg-sky-400", label: "Microphone", desc: "Required for voice calls" },
-    { icon: <MapPin className="w-5 h-5" />, color: "bg-slate-500", label: "Location", desc: "Optional for regional support" },
-    { icon: <HardDrive className="w-5 h-5" />, color: "bg-indigo-400", label: "Storage", desc: "Required for file sharing" },
+    { icon: <Camera className="w-5 h-5" />, color: "bg-amber-500", label: "Camera", desc: "Required for video support" },
+    { icon: <Mic className="w-5 h-5" />, color: "bg-yellow-400", label: "Microphone", desc: "Required for voice calls" },
+    { icon: <MapPin className="w-5 h-5" />, color: "bg-stone-500", label: "Location", desc: "Optional for regional support" },
+    { icon: <HardDrive className="w-5 h-5" />, color: "bg-amber-400", label: "Storage", desc: "Required for file sharing" },
   ];
 
   return (
     <div className="min-h-screen relative flex items-center justify-center px-4 overflow-hidden">
       {/* Gradient background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-blue-500 to-sky-400" />
+      <div className="absolute inset-0 bg-gradient-to-br from-yellow-500 via-amber-400 to-yellow-300" />
       <div className="absolute inset-0 bg-[url('/hero-bg.jpg')] bg-cover bg-center opacity-20" />
       <div className="absolute top-20 left-10 w-48 h-48 bg-white/10 rounded-full blur-2xl" />
       <div className="absolute bottom-20 right-10 w-64 h-64 bg-white/10 rounded-full blur-2xl" />

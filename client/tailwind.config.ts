@@ -10,14 +10,14 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          blue: "#2563EB",
-          "blue-light": "#3B82F6",
-          "blue-pale": "#EFF6FF",
-          navy: "#0F172A",
-          "navy-mid": "#1E293B",
-          gray: "#F8FAFC",
-          "gray-mid": "#E2E8F0",
-          "gray-text": "#64748B",
+    blue: "#FFB200",       // Main yellow
+    "blue-light": "#FFC933", // Hover yellow
+    "blue-pale": "#FFF8E1",  // Very light yellow background
+    navy: "#0F172A",
+    "navy-mid": "#1E293B",
+    gray: "#F8FAFC",
+    "gray-mid": "#E2E8F0",
+    "gray-text": "#64748B",
         },
       },
       fontFamily: {
