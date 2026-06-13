@@ -19,38 +19,36 @@ export default function LoginPage() {
       setError("Please enter email and password.");
       return;
     }
-
     setLoading(true);
     setError("");
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         password,
       });
 
-      console.log("Login data:", data);
-      console.log("Login error:", error);
-
       if (error) {
-        if (error.message.includes("Email not confirmed")) {
-          setError("Email not confirmed. Go to Supabase → Auth → Providers → Email → turn OFF 'Confirm email', then try again.");
-        } else if (error.message.includes("Invalid login credentials")) {
-          setError("Wrong email or password.");
+        setLoading(false);
+        if (error.message.toLowerCase().includes("email not confirmed")) {
+          setError("Email not confirmed. Go to Supabase → Auth → Providers → Email → turn OFF Confirm email.");
+        } else if (error.message.toLowerCase().includes("invalid")) {
+          setError("Wrong email or password. Try signing up first.");
         } else {
           setError(error.message);
         }
-        setLoading(false);
         return;
       }
 
-      if (data?.user) {
-        router.push("/dashboard");
+      if (data?.session) {
+        router.replace("/dashboard");
+      } else {
+        setLoading(false);
+        setError("Login failed. Please try again.");
       }
     } catch (err: any) {
-      console.error("Login exception:", err);
-      setError(err.message || "Something went wrong.");
       setLoading(false);
+      setError(err.message || "Something went wrong.");
     }
   }
 
@@ -82,6 +80,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                autoComplete="email"
               />
             </div>
 
@@ -97,6 +96,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"

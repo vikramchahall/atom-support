@@ -2,12 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Video, ArrowRight, CheckCircle, AlertCircle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 export default function SignupPage() {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -15,49 +13,44 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
 
-  async function handleSignup(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSignup() {
+    if (!name.trim()) { setError("Enter your name."); return; }
+    if (!email.trim()) { setError("Enter your email."); return; }
+    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+
     setLoading(true);
     setError("");
 
-    console.log("Attempting signup with:", email);
-    console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-
     try {
       const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         password,
         options: {
-          data: {
-            name: name.trim(),
-            role: "agent",
-          },
+          data: { name: name.trim(), role: "agent" },
         },
       });
 
-      console.log("Signup response data:", data);
-      console.log("Signup response error:", error);
-
       if (error) {
-        setError(error.message);
         setLoading(false);
+        setError(error.message);
+        return;
+      }
+
+      if (data?.user?.identities?.length === 0) {
+        setLoading(false);
+        setError("This email is already registered. Please sign in.");
         return;
       }
 
       if (data?.user) {
-        console.log("User created:", data.user.id);
-        // Check if email confirmation is needed
-        if (data.user.identities && data.user.identities.length === 0) {
-          setError("This email is already registered. Try signing in.");
-          setLoading(false);
-          return;
-        }
         setDone(true);
+      } else {
+        setLoading(false);
+        setError("Signup failed. Please try again.");
       }
     } catch (err: any) {
-      console.error("Signup exception:", err);
-      setError(err.message || "Something went wrong. Check console.");
       setLoading(false);
+      setError(err.message || "Something went wrong.");
     }
   }
 
@@ -69,16 +62,10 @@ export default function SignupPage() {
             <CheckCircle className="w-8 h-8 text-green-500" />
           </div>
           <h2 className="text-xl font-bold text-brand-navy mb-2">Account created!</h2>
-          <p className="text-sm text-brand-gray-text mb-2">
-            Signed up as <strong>{email}</strong>.
+          <p className="text-sm text-brand-gray-text mb-6">
+            Signed up as <strong>{email}</strong>. You can sign in now.
           </p>
-          <p className="text-xs text-brand-gray-text mb-6">
-            If email confirmation is enabled in Supabase, check your inbox. Otherwise you can sign in now.
-          </p>
-          <Link
-            href="/login"
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
+          <Link href="/login" className="btn-primary w-full flex items-center justify-center gap-2">
             Go to sign in <ArrowRight className="w-4 h-4" />
           </Link>
         </div>
@@ -97,13 +84,11 @@ export default function SignupPage() {
             <Video className="w-7 h-7 text-brand-navy" />
           </div>
           <h1 className="text-2xl font-bold text-brand-navy">Create your account</h1>
-          <p className="text-sm text-brand-gray-text mt-1">
-            Start supporting customers in minutes
-          </p>
+          <p className="text-sm text-brand-gray-text mt-1">Start supporting customers in minutes</p>
         </div>
 
         <div className="card-modal">
-          <form onSubmit={handleSignup} className="space-y-4">
+          <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-brand-navy uppercase tracking-wide mb-2 block">
                 Full name
@@ -114,7 +99,8 @@ export default function SignupPage() {
                 placeholder="Your name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                required
+                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
+                autoComplete="name"
               />
             </div>
 
@@ -128,7 +114,8 @@ export default function SignupPage() {
                 placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
+                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
+                autoComplete="email"
               />
             </div>
 
@@ -142,8 +129,8 @@ export default function SignupPage() {
                 placeholder="Min. 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                minLength={8}
-                required
+                onKeyDown={(e) => e.key === "Enter" && handleSignup()}
+                autoComplete="new-password"
               />
             </div>
 
@@ -155,7 +142,7 @@ export default function SignupPage() {
             )}
 
             <button
-              type="submit"
+              onClick={handleSignup}
               disabled={loading}
               className="btn-primary w-full flex items-center justify-center gap-2 py-4 text-base"
             >
@@ -165,16 +152,6 @@ export default function SignupPage() {
                 <>Create account <ArrowRight className="w-4 h-4" /></>
               )}
             </button>
-          </form>
-
-          {/* Debug panel — remove before production */}
-          <div className="mt-4 p-3 bg-brand-gray rounded-2xl">
-            <p className="text-xs text-brand-gray-text font-mono">
-              URL set: {process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅" : "❌ MISSING"}
-            </p>
-            <p className="text-xs text-brand-gray-text font-mono">
-              KEY set: {process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅" : "❌ MISSING"}
-            </p>
           </div>
 
           <div className="mt-6 pt-6 border-t border-brand-gray-mid text-center">
