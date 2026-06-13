@@ -30,7 +30,10 @@ function SessionPageInner() {
   const canvas = useCanvas();
 
   useEffect(() => {
-    media.initMedia().then(() => initSession());
+    (async () => {
+  await media.initMedia();
+  await initSession();
+})();
     return () => {
       media.streamRef.current?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
       webrtc.destroyWebRTC();

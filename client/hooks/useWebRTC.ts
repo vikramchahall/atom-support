@@ -17,34 +17,58 @@ export function useWebRTC(
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const [remoteConnected, setRemoteConnected] = useState(false);
 
-  function createPeerConnection(remoteSocketId: string): RTCPeerConnection {
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    pcsRef.current.set(remoteSocketId, pc);
+function createPeerConnection(remoteSocketId: string): RTCPeerConnection {
+  const pc = new RTCPeerConnection(ICE_SERVERS);
+  pcsRef.current.set(remoteSocketId, pc);
 
-    streamRef.current?.getTracks().forEach(track => {
+  // Add tracks only if stream exists
+  if (streamRef.current) {
+    streamRef.current.getTracks().forEach(track => {
       pc.addTrack(track, streamRef.current!);
     });
-
-    pc.onicecandidate = ({ candidate }) => {
-      if (candidate) socketRef.current?.emit("ice-candidate", { to: remoteSocketId, candidate });
-    };
-
-    pc.ontrack = ({ streams }) => {
-      if (remoteVideoRef.current && streams[0]) {
-        remoteVideoRef.current.srcObject = streams[0];
-        setRemoteConnected(true);
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        setRemoteConnected(false);
-        pcsRef.current.delete(remoteSocketId);
-      }
-    };
-
-    return pc;
   }
+
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) {
+      socketRef.current?.emit("ice-candidate", {
+        to: remoteSocketId,
+        candidate,
+      });
+    }
+  };
+
+  pc.ontrack = ({ streams }) => {
+    if (remoteVideoRef.current && streams[0]) {
+      remoteVideoRef.current.srcObject = streams[0];
+      setRemoteConnected(true);
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (
+      pc.connectionState === "disconnected" ||
+      pc.connectionState === "failed"
+    ) {
+      setRemoteConnected(false);
+      pcsRef.current.delete(remoteSocketId);
+    }
+  };
+
+  return pc;
+}
+
+  async function waitForStream() {
+  if (streamRef.current) return;
+
+  await new Promise<void>((resolve) => {
+    const interval = setInterval(() => {
+      if (streamRef.current) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 100);
+  });
+}
 
   function initSocket(code: string, role: string, name: string) {
     const socket = io(process.env.NEXT_PUBLIC_SERVER_URL!, { transports: ["websocket"] });
@@ -54,32 +78,47 @@ export function useWebRTC(
       socket.emit("join-session", { sessionCode: code, role, name });
     });
 
-    socket.on("existing-peers", async ({ peers }: { peers: string[] }) => {
-      for (const peerId of peers) {
-        const pc = createPeerConnection(peerId);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit("offer", { to: peerId, offer });
-      }
-    });
+socket.on("existing-peers", async ({ peers }: { peers: string[] }) => {
+  await waitForStream();
 
+  for (const peerId of peers) {
+    const pc = createPeerConnection(peerId);
+
+    const offer = await pc.createOffer();
+
+    await pc.setLocalDescription(offer);
+
+    socket.emit("offer", {
+      to: peerId,
+      offer,
+    });
+  }
+});
     socket.on("peer-joined", ({ socketId }: { socketId: string }) => {
       createPeerConnection(socketId);
     });
+socket.on("offer", async ({ from, offer }: any) => {
+  await waitForStream();
 
-    socket.on("offer", async ({ from, offer }: any) => {
-      let pc = pcsRef.current.get(from);
-      if (!pc) pc = createPeerConnection(from);
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit("answer", { to: from, answer });
-    });
+  let pc = pcsRef.current.get(from);
 
-    socket.on("answer", async ({ from, answer }: any) => {
-      const pc = pcsRef.current.get(from);
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    });
+  if (!pc) {
+    pc = createPeerConnection(from);
+  }
+
+  await pc.setRemoteDescription(
+    new RTCSessionDescription(offer)
+  );
+
+  const answer = await pc.createAnswer();
+
+  await pc.setLocalDescription(answer);
+
+  socket.emit("answer", {
+    to: from,
+    answer,
+  });
+});
 
     socket.on("ice-candidate", async ({ from, candidate }: any) => {
       const pc = pcsRef.current.get(from);
