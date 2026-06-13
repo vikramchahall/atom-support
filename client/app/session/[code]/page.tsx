@@ -94,41 +94,67 @@ useEffect(() => {
 
   // ── Media ──────────────────────────────────────────────────────────────────
 
-  async function initMedia(deviceId?: string, facing?: "user" | "environment") {
-    try {
-      streamRef.current?.getTracks().forEach(t => t.stop());
+async function initMedia(deviceId?: string, facing?: "user" | "environment") {
+  try {
+    streamRef.current?.getTracks().forEach(t => t.stop());
 
-      let videoConstraint: MediaTrackConstraints | boolean = true;
-      if (deviceId) {
-        videoConstraint = { deviceId: { exact: deviceId } };
-      } else if (facing) {
-        videoConstraint = { facingMode: facing };
+    // Explicitly request audio permission first on mobile
+    if (!deviceId && !facing) {
+      try {
+        const audioTest = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        audioTest.getTracks().forEach(t => t.stop());
+      } catch (err) {
+        console.warn("Audio permission denied:", err);
+        setMediaError("Microphone permission denied — please allow mic access and refresh.");
+        return null;
       }
-
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraint,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      streamRef.current = s;
-      if (localVideoRef.current) localVideoRef.current.srcObject = s;
-
-      const all = await navigator.mediaDevices.enumerateDevices();
-      const cams = all.filter(d => d.kind === "videoinput");
-      setDevices(cams);
-      if (!deviceId && !facing && cams[0]) setSelectedCamera(cams[0].deviceId);
-
-      return s;
-    } catch (err: any) {
-      console.warn("Media error:", err.message);
-      setMediaError("Camera/mic unavailable — chat still works.");
-      return null;
     }
+
+    let videoConstraint: MediaTrackConstraints | boolean = true;
+    if (deviceId) {
+      videoConstraint = { deviceId: { exact: deviceId } };
+    } else if (facing) {
+      videoConstraint = { facingMode: facing };
+    }
+
+    const s = await navigator.mediaDevices.getUserMedia({
+      video: videoConstraint,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+
+    // Verify audio tracks came through
+    if (s.getAudioTracks().length === 0) {
+      setMediaError("No microphone detected — the other party won't hear you.");
+    } else {
+      s.getAudioTracks().forEach(t => { t.enabled = true; });
+      console.log("[Media] audio tracks:", s.getAudioTracks().map(t => `${t.label} enabled:${t.enabled}`));
+    }
+
+    streamRef.current = s;
+    if (localVideoRef.current) localVideoRef.current.srcObject = s;
+
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const cams = all.filter(d => d.kind === "videoinput");
+    setDevices(cams);
+    if (!deviceId && !facing && cams[0]) setSelectedCamera(cams[0].deviceId);
+
+    return s;
+  } catch (err: any) {
+    console.warn("Media error:", err.message);
+    if (err.name === "NotAllowedError") {
+      setMediaError("Camera/mic permission denied — please allow access and refresh.");
+    } else if (err.name === "NotFoundError") {
+      setMediaError("No camera or microphone found.");
+    } else {
+      setMediaError("Camera/mic unavailable — chat still works.");
+    }
+    return null;
   }
+}
 
   async function switchCamera(deviceId: string) {
     setSelectedCamera(deviceId);
