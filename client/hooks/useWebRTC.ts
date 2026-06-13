@@ -106,13 +106,22 @@ export function useWebRTC(
 
   function initSocket(code: string, role: string, name: string) {
     const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
+
+    // ── KEY DEBUG LOGS ──────────────────────────────────────
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("[Socket] NEXT_PUBLIC_SERVER_URL =", serverUrl);
+    console.log("[Socket] connecting as:", name, "| role:", role, "| session:", code);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    // ────────────────────────────────────────────────────────
+
     if (!serverUrl) {
-      setMediaError("Server URL not configured.");
+      console.error("[Socket] ❌ NEXT_PUBLIC_SERVER_URL is undefined! Check Vercel env vars.");
+      setMediaError("Server URL not configured — check Vercel environment variables.");
       return;
     }
 
     const socket = io(serverUrl, {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"], // polling first for Railway
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,
@@ -120,11 +129,10 @@ export function useWebRTC(
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("[Socket] connected:", socket.id);
+      console.log("[Socket] ✅ connected! id:", socket.id);
       socket.emit("join-session", { sessionCode: code, role, name });
     });
 
-    // Late joiner: send offers to everyone already in the room
     socket.on("existing-peers", async ({ peers }: { peers: string[] }) => {
       console.log("[Socket] existing peers:", peers);
       await waitForStream();
@@ -142,8 +150,6 @@ export function useWebRTC(
       }
     });
 
-    // Already in room: new peer joined, YOU must send the offer
-    // *** THIS IS THE FIX — old code did createPeerConnection() with no offer ***
     socket.on("peer-joined", async ({ socketId }: { socketId: string }) => {
       console.log("[Socket] new peer joined, sending offer:", socketId);
       await waitForStream();
@@ -207,7 +213,7 @@ export function useWebRTC(
     });
 
     socket.on("connect_error", (err) => {
-      console.error("[Socket] connect error:", err.message);
+      console.error("[Socket] ❌ connect_error:", err.message, err);
       setMediaError("Video server unreachable — chat still works.");
     });
 
