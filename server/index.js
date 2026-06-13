@@ -5,15 +5,22 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 
 const app = express();
-app.use(cors({ origin: process.env.CLIENT_URL || "*", methods: ["GET", "POST"] }));
+
+// Hardcode the allowed origin — no trailing slash, no env var formatting issues
+const ALLOWED_ORIGIN = "https://atom-support.vercel.app";
+
+const corsOptions = {
+  origin: ALLOWED_ORIGIN,
+  methods: ["GET", "POST"],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: process.env.CLIENT_URL || "*", methods: ["GET", "POST"] },
-});
+const io = new Server(server, { cors: corsOptions });
 
-// sessionCode → Set of socket ids
 const sessionPeers = new Map();
 
 io.on("connection", (socket) => {
@@ -22,32 +29,17 @@ io.on("connection", (socket) => {
   socket.on("join-session", ({ sessionCode, role, name }) => {
     socket.join(sessionCode);
     socket.data = { sessionCode, role, name };
-
     if (!sessionPeers.has(sessionCode)) sessionPeers.set(sessionCode, new Set());
     sessionPeers.get(sessionCode).add(socket.id);
-
-    // Tell everyone else a new peer arrived
     socket.to(sessionCode).emit("peer-joined", { socketId: socket.id, name, role });
-
-    // Tell the new peer who's already there
     const others = [...sessionPeers.get(sessionCode)].filter(id => id !== socket.id);
     socket.emit("existing-peers", { peers: others });
-
     console.log(`${name} (${role}) joined ${sessionCode}`);
   });
 
-  // WebRTC signaling — just relay between peers
-  socket.on("offer", ({ to, offer }) => {
-    io.to(to).emit("offer", { from: socket.id, offer });
-  });
-
-  socket.on("answer", ({ to, answer }) => {
-    io.to(to).emit("answer", { from: socket.id, answer });
-  });
-
-  socket.on("ice-candidate", ({ to, candidate }) => {
-    io.to(to).emit("ice-candidate", { from: socket.id, candidate });
-  });
+  socket.on("offer",          ({ to, offer })      => io.to(to).emit("offer",          { from: socket.id, offer }));
+  socket.on("answer",         ({ to, answer })     => io.to(to).emit("answer",         { from: socket.id, answer }));
+  socket.on("ice-candidate",  ({ to, candidate })  => io.to(to).emit("ice-candidate",  { from: socket.id, candidate }));
 
   socket.on("disconnect", () => {
     const { sessionCode, name, role } = socket.data || {};
@@ -59,7 +51,7 @@ io.on("connection", (socket) => {
   });
 });
 
-app.get("/health", (_, res) => res.json({ status: "ok" }));
+app.get("/health", (_, res) => res.json({ status: "ok", allowedOrigin: ALLOWED_ORIGIN }));
 
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`Listening on ${PORT} — CORS: ${ALLOWED_ORIGIN}`));
